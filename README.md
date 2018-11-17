@@ -16,7 +16,11 @@
     * Income statement
          * Revenue
          * Profit
-    * P/E ratio
+    * (Trailing) P/E ratio
          * Belove average unless it's a fast growing company
          * Try not to invest in company with P/E over 50
-    * Compare with other companies
+    * Forward P/E ration (Future profits)
+    * Price/Sales (Revenue)
+    * Price/Book  (How much money the company has)
+    * Debt/Equity ratio
+    * Compare with average and competitor companies
