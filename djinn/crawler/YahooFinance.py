@@ -8,6 +8,9 @@ def get_yahoo_report(stock):
     html = requests.get(YAHOO_FINANCE_URL + stock).text
     soup = BeautifulSoup(html, "lxml")
 
+    if soup.find("div", {"id": "quote-summary"}) is None:
+        return {}
+
     rows = soup.find("div", {"id": "quote-summary"}).find_all("tr")
 
     result = {}
@@ -20,10 +23,9 @@ def get_yahoo_report(stock):
     return result
 
 
-
 def main():
     for k, v in get_yahoo_report("AAPL").items():
-        print(k + ":\t" + v + "\n")
+        print(k + ":\t" + v)
 
 
 if __name__ == "__main__":
