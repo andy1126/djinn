@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 from crawler import YAHOO_FINANCE_URL
 
 
-def get_summary(ticker_symbol):
+def __get_summary(ticker_symbol):
     html = requests.get(YAHOO_FINANCE_URL + ticker_symbol).text
     soup = BeautifulSoup(html, "lxml")
 
@@ -23,4 +23,4 @@ def get_summary(ticker_symbol):
 
 
 def get_pe_ratio(ticker_symbol):
-    return get_summary(ticker_symbol)["PE Ratio (TTM)"]
+    return __get_summary(ticker_symbol)["PE Ratio (TTM)"]
