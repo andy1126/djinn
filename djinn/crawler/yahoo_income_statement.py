@@ -1,7 +1,16 @@
 import requests
 import locale
 from bs4 import BeautifulSoup
+<<<<<<< HEAD
 from crawler import YAHOO_FINANCIAL_REPORT_URL
+||||||| merged common ancestors
+
+YAHOO_FINANCE_URL = "https://finance.yahoo.com/quote/{}/financials"
+=======
+
+YAHOO_FINANCE_URL = "https://finance.yahoo.com/quote/{}/financials"
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+>>>>>>> pull setlocale out of function body #3
 
 
 def get_income_statement(stock):
@@ -15,7 +24,6 @@ def get_income_statement(stock):
     else:
         rows = matched_doms[0].find_all("tr")
         result = {}
-        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
         for i in range(1, 4):
             row = rows[i]
