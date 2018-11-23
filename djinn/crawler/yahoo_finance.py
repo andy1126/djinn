@@ -1,8 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
 from crawler import YAHOO_FINANCE_URL
+from cache.in_memory_cache import cache
 
-
+@cache
 def __get_summary(ticker_symbol):
     html = requests.get(YAHOO_FINANCE_URL + ticker_symbol).text
     soup = BeautifulSoup(html, "lxml")
