@@ -1,11 +1,10 @@
 import requests
 from bs4 import BeautifulSoup
+from crawler import YAHOO_FINANCE_URL
 
-YAHOO_FINANCE_URL = "https://finance.yahoo.com/quote/"
 
-
-def get_yahoo_report(stock):
-    html = requests.get(YAHOO_FINANCE_URL + stock).text
+def get_summary(ticker_symbol):
+    html = requests.get(YAHOO_FINANCE_URL + ticker_symbol).text
     soup = BeautifulSoup(html, "lxml")
 
     if soup.find("div", {"id": "quote-summary"}) is None:
@@ -23,10 +22,5 @@ def get_yahoo_report(stock):
     return result
 
 
-def main():
-    for k, v in get_yahoo_report("AAPL").items():
-        print(k + ":\t" + v)
-
-
-if __name__ == "__main__":
-    main()
+def get_pe_ratio(ticker_symbol):
+    return get_summary(ticker_symbol)["PE Ratio (TTM)"]
