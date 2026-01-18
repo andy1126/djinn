@@ -304,7 +304,7 @@ def plot_comparison(strategy_results, data):
         returns_data.append(returns)
         labels.append(strategy_name.replace('_', ' ').title())
 
-    ax2.boxplot(returns_data, labels=labels)
+    ax2.boxplot(returns_data, tick_labels=labels)
     ax2.set_title('月度收益率分布')
     ax2.set_ylabel('月度收益率')
     ax2.grid(True, alpha=0.3)
@@ -528,7 +528,6 @@ def run_rebalancing_comparison_example():
         print("✓ 图表已保存为 'rebalancing_strategy_comparison.png'")
     except Exception as e:
         print(f"✗ 图表生成失败: {e}")
-        print("  确保已安装 matplotlib: pip install matplotlib")
 
     print()
     print("示例运行完成！")

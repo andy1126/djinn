@@ -442,6 +442,7 @@ def plot_backtest_results(results, metrics):
     ax6.grid(True, alpha=0.3)
     ax6.invert_yaxis()  # 回撤向下显示
 
+    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei']
     plt.tight_layout()
     plt.savefig('portfolio_backtest_results.png', dpi=150, bbox_inches='tight')
     plt.show()
