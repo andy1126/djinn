@@ -21,10 +21,13 @@
 """
 
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 from .base import Strategy, PositionSizing
+from .indicators import TechnicalIndicators
+from .utils import vectorized_confirmation, ParameterValidator
 from ...data.market_data import MarketData
 from ...utils.exceptions import StrategyError
 from ...utils.logger import logger
@@ -175,7 +178,81 @@ class MovingAverageCrossover(Strategy):
                 details={"error": str(e)}
             )
 
-    def _calculate_signals_vectorized(self, data: pd.DataFrame) -> pd.Series:
+    def calculate_indicators(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+        """
+        计算移动平均线交叉策略所需的技术指标。
+
+        目的：
+        1. 计算快速和慢速移动平均线，作为信号生成的基础
+        2. 使用TechnicalIndicators类进行指标计算，支持缓存和性能优化
+        3. 将指标结果存储到self.indicators中供信号计算方法使用
+
+        参数：
+            data: 市场数据DataFrame，包含OHLCV等列
+
+        返回：
+            Dict[str, pd.Series]: 指标字典，包含'fast_ma'和'slow_ma'键
+
+        实现方案：
+        1. 从数据中提取收盘价序列
+        2. 根据参数选择移动平均线类型（SMA或EMA）
+        3. 使用TechnicalIndicators类计算指标，支持缓存
+        4. 将结果存储到self.indicators中并返回
+        """
+        try:
+            close_prices = data['close']
+            fast_period = int(self.parameters['fast_period'])
+            slow_period = int(self.parameters['slow_period'])
+            ma_type = self.parameters['ma_type']
+
+            if ma_type == 'sma':
+                # 使用TechnicalIndicators计算SMA，支持缓存
+                fast_ma_result = TechnicalIndicators.simple_moving_average(close_prices, window=fast_period)
+                slow_ma_result = TechnicalIndicators.simple_moving_average(close_prices, window=slow_period)
+                fast_ma = fast_ma_result.values
+                slow_ma = slow_ma_result.values
+            elif ma_type == 'ema':
+                # 使用TechnicalIndicators计算EMA，支持缓存
+                fast_ma_result = TechnicalIndicators.exponential_moving_average(close_prices, span=fast_period)
+                slow_ma_result = TechnicalIndicators.exponential_moving_average(close_prices, span=slow_period)
+                fast_ma = fast_ma_result.values
+                slow_ma = slow_ma_result.values
+            else:
+                raise StrategyError(
+                    f"不支持的移动平均线类型: {ma_type}",
+                    strategy_name=self.name,
+                    parameters=self.parameters
+                )
+
+            # 填充NaN值
+            fast_ma = fast_ma.ffill()
+            slow_ma = slow_ma.ffill()
+
+            # 存储到self.indicators中
+            self.indicators = {
+                'fast_ma': fast_ma,
+                'slow_ma': slow_ma
+            }
+
+            # 注册指标到注册表供缓存使用
+            # 这里可以添加更复杂的指标注册逻辑
+
+            logger.debug(
+                f"计算技术指标完成: fast_ma({fast_period}), slow_ma({slow_period}), "
+                f"类型={ma_type}, 数据点={len(close_prices)}"
+            )
+
+            return self.indicators
+
+        except Exception as e:
+            raise StrategyError(
+                "计算技术指标失败",
+                strategy_name=self.name,
+                parameters=self.parameters,
+                details={"error": str(e)}
+            )
+
+    def calculate_signals_vectorized(self, data: pd.DataFrame) -> pd.Series:
         """
         Calculate signals using vectorized operations for vectorized backtesting.
 
@@ -192,68 +269,35 @@ class MovingAverageCrossover(Strategy):
             if data.empty:
                 return pd.Series(dtype=float)
 
-            close_prices = data['close']
+            # 使用calculate_indicators方法获取移动平均线（支持缓存）
+            indicators = self.calculate_indicators(data)
+            fast_ma = indicators['fast_ma']
+            slow_ma = indicators['slow_ma']
 
-            # Calculate moving averages
-            fast_period = int(self.parameters['fast_period'])
-            slow_period = int(self.parameters['slow_period'])
-            ma_type = self.parameters['ma_type']
+            # 计算交叉信号
+            signals = pd.Series(0, index=fast_ma.index)
 
-            if ma_type == 'sma':
-                fast_ma = close_prices.rolling(window=fast_period).mean()
-                slow_ma = close_prices.rolling(window=slow_period).mean()
-            elif ma_type == 'ema':
-                fast_ma = close_prices.ewm(span=fast_period, adjust=False).mean()
-                slow_ma = close_prices.ewm(span=slow_period, adjust=False).mean()
-            else:
-                raise StrategyError(
-                    f"Unsupported moving average type: {ma_type}",
-                    strategy_name=self.name,
-                    parameters=self.parameters
-                )
-
-            # Fill NaN values for moving averages (forward fill)
-            fast_ma = fast_ma.ffill()
-            slow_ma = slow_ma.ffill()
-
-            # Calculate crossover signals
-            signals = pd.Series(0, index=close_prices.index)
-
-            # Bullish crossover: fast MA crosses above slow MA
-            bullish = (fast_ma > slow_ma)
+            # 金叉：快线上穿慢线
+            bullish = (fast_ma > slow_ma) & (fast_ma.shift(1) > slow_ma.shift(1)) & (fast_ma.shift(2) <= slow_ma.shift(2)) & (fast_ma.shift(3) <= slow_ma.shift(3))
             signals[bullish] = 1
 
-            # Bearish crossover: fast MA crosses below slow MA
-            bearish = (fast_ma < slow_ma)
+            # 死叉：快线下穿慢线
+            bearish = (fast_ma < slow_ma) & (fast_ma.shift(1) < slow_ma.shift(1)) & (fast_ma.shift(2) >= slow_ma.shift(2)) & (fast_ma.shift(3) >= slow_ma.shift(3))
             signals[bearish] = -1
 
-            # Apply confirmation requirement if configured
-            if self.parameters.get('require_confirmation', True):
-                confirmation_periods = self.parameters.get('confirmation_periods', 2)
 
-                # Create state series: 1 when fast_ma > slow_ma, -1 when fast_ma < slow_ma, 0 otherwise
-                ma_state = pd.Series(0, index=close_prices.index)
-                ma_state[fast_ma > slow_ma] = 1
-                ma_state[fast_ma < slow_ma] = -1
+            # 应用信号确认要求（如果配置）
+            # if self.parameters.get('require_confirmation', True):
+            #     confirmation_periods = self.parameters.get('confirmation_periods', 2)
+            #     # 使用向量化信号确认函数替换循环
+            #     confirmations = vectorized_confirmation(ma_state, confirmation_periods)
 
-                # Create confirmed signals
-                confirmed_signals = pd.Series(0, index=signals.index)
-
-                for i in range(confirmation_periods, len(signals)):
-                    window = signals.iloc[i - confirmation_periods:i + 1]
-
-                    # Check if all signals in window are the same and non-zero
-                    if window.nunique() == 1 and window.iloc[0] != 0:
-                        confirmed_signals.iloc[i] = window.iloc[0]
-
-                signals = confirmed_signals
-
-            # Apply minimum crossover strength threshold
+            # 应用最小交叉强度阈值
             if self.parameters.get('min_crossover_strength', 0.1) > 0:
-                # Calculate crossover strength
+                # 计算交叉强度
                 crossover_strength = (fast_ma - slow_ma).abs() / slow_ma.abs()
 
-                # Filter signals by strength
+                # 按强度过滤信号
                 strength_threshold = self.parameters.get('min_crossover_strength', 0.1)
                 weak_signals = crossover_strength < strength_threshold
                 signals[weak_signals] = 0
@@ -292,7 +336,7 @@ class MovingAverageCrossover(Strategy):
                 return 0.0
 
             # Use vectorized signal calculation for efficiency
-            signals = self._calculate_signals_vectorized(data)
+            signals = self.calculate_signals_vectorized(data)
 
             # Get the signal for the current date
             # If current_date is not in the index, use the last available signal

@@ -383,13 +383,22 @@ class Strategy(abc.ABC):
 
         # 策略状态
         self.initialized = False
-        self.signals: List[Signal] = []
+        self.signals: List[Signal] = []  # 后续将替换为SignalSeries
         self.indicators: Dict[str, pd.Series] = {}
         self.metadata: Dict[str, Any] = {
             "name": name,
             "parameters": parameters,
             "created_at": datetime.now().isoformat(),
         }
+
+        # 多符号支持
+        self.symbols: List[str] = []
+
+        # 指标注册表
+        self.indicators_registry: Dict[str, Any] = {}  # 存储Indicator实例
+
+        # 指标缓存
+        self._indicator_cache: Dict[str, pd.Series] = {}
 
         # Default minimum data points required for strategy
         self.min_data_points = 20  # Default value, can be overridden by subclasses
@@ -424,6 +433,206 @@ class Strategy(abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def calculate_signals_vectorized(self, data: pd.DataFrame) -> pd.Series:
+        """
+        抽象方法：向量化信号计算。
+
+        目的：
+        1. 支持向量化回测引擎，一次性计算整个时间序列的信号
+        2. 提供高性能信号生成，避免逐日循环
+        3. 返回pd.Series，索引与数据索引一致，值为信号强度（正数买入，负数卖出，0无信号）
+
+        参数：
+            data: 市场数据DataFrame，包含OHLCV等列
+
+        返回：
+            pd.Series: 信号序列，索引与data索引相同
+
+        实现方案：
+        1. 子类必须实现此方法，提供向量化信号计算逻辑
+        2. 可使用pandas向量化操作，避免Python循环
+        3. 信号值范围无限制，正数表示买入信号强度，负数表示卖出信号强度
+        4. 可结合技术指标进行计算
+
+        使用方法：
+        1. 向量化回测引擎调用此方法获取整个时间序列信号
+        2. 与calculate_signal方法保持逻辑一致性
+        3. 支持多符号数据（通过symbol列区分）
+        """
+        pass
+
+    @abc.abstractmethod
+    def calculate_indicators(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+        """
+        抽象方法：计算技术指标。
+
+        目的：
+        1. 计算策略所需的技术指标，供信号生成使用
+        2. 支持指标缓存和复用，提高计算效率
+        3. 返回标准化指标字典，便于策略内部使用
+
+        参数：
+            data: 市场数据DataFrame，包含OHLCV等列
+
+        返回：
+            Dict[str, pd.Series]: 指标字典，键为指标名称，值为指标序列
+
+        实现方案：
+        1. 子类必须实现此方法，计算策略所需的技术指标
+        2. 可使用TechnicalIndicators类或自定义指标计算
+        3. 指标序列索引应与data索引一致
+        4. 建议使用指标注册表和缓存机制提高性能
+
+        使用方法：
+        1. 在信号计算前调用，预计算所需指标
+        2. 指标结果可存储在self.indicators中供后续使用
+        3. 支持指标依赖关系处理
+        """
+        pass
+
+    # ========================================================================
+    # 指标管理方法
+    # ========================================================================
+
+    def register_indicator(self, name: str, indicator: Any) -> None:
+        """
+        注册技术指标。
+
+        目的：
+        1. 将指标实例注册到策略中，便于统一管理和复用
+        2. 支持指标参数预配置和缓存
+        3. 提供指标依赖关系管理
+
+        参数：
+            name: 指标名称，用于后续引用
+            indicator: 指标实例，必须实现calculate方法
+
+        实现方案：
+        1. 存储指标实例到注册表
+        2. 验证指标接口（如有calculate方法）
+        3. 记录注册日志
+
+        使用方法：
+        1. 在策略初始化时注册所需指标
+        2. 通过get_indicator方法获取指标计算结果
+        3. 支持指标参数动态配置
+        """
+        # 简单验证指标接口
+        if not hasattr(indicator, 'calculate'):
+            raise ValueError(f"指标 '{name}' 必须实现 calculate 方法")
+
+        self.indicators_registry[name] = indicator
+        logger.debug(f"注册指标: {name}")
+
+    def get_indicator(self, name: str, data: pd.DataFrame, **params) -> pd.Series:
+        """
+        获取指标计算结果（带缓存）。
+
+        目的：
+        1. 计算并返回指标结果，支持缓存避免重复计算
+        2. 自动处理指标参数和数据变化
+        3. 提供透明的缓存机制，提高性能
+
+        参数：
+            name: 指标名称，必须已注册
+            data: 输入数据DataFrame
+            **params: 指标参数，将覆盖注册时的默认参数
+
+        返回：
+            pd.Series: 指标计算结果序列
+
+        实现方案：
+        1. 检查缓存中是否存在相同参数和数据的计算结果
+        2. 缓存未命中时调用指标calculate方法
+        3. 存储结果到缓存供后续使用
+        4. 支持缓存大小限制和淘汰策略
+
+        使用方法：
+        1. 在信号计算中调用：indicator_values = self.get_indicator('sma_20', data, window=20)
+        2. 自动缓存相同参数和数据的计算结果
+        3. 支持参数动态调整
+        """
+        if name not in self.indicators_registry:
+            raise ValueError(f"指标 '{name}' 未注册，请先调用 register_indicator")
+
+        # 生成缓存键（基于数据哈希和参数）
+        try:
+            # 使用数据的形状、索引和参数生成简单键
+            data_key = f"{data.shape}_{hash(tuple(data.index))}"
+            param_key = str(sorted(params.items()))
+            cache_key = f"{name}_{data_key}_{param_key}"
+        except Exception:
+            # 如果哈希失败，使用唯一标识
+            cache_key = f"{name}_{id(data)}_{id(params)}"
+
+        # 检查缓存
+        if cache_key in self._indicator_cache:
+            logger.debug(f"指标缓存命中: {name}")
+            return self._indicator_cache[cache_key]
+
+        # 缓存未命中，计算指标
+        indicator = self.indicators_registry[name]
+        try:
+            result = indicator.calculate(data, **params)
+            # 确保返回的是Series
+            if isinstance(result, pd.Series):
+                indicator_series = result
+            elif hasattr(result, 'values'):
+                indicator_series = result.values
+            else:
+                raise ValueError(f"指标 '{name}' 返回类型不支持: {type(result)}")
+
+            # 存储到缓存
+            self._indicator_cache[cache_key] = indicator_series
+
+            # 简单缓存大小限制（最多100个条目）
+            if len(self._indicator_cache) > 100:
+                # 移除第一个键（简单LRU）
+                oldest_key = next(iter(self._indicator_cache))
+                del self._indicator_cache[oldest_key]
+
+            logger.debug(f"指标计算完成并缓存: {name}")
+            return indicator_series
+
+        except Exception as e:
+            logger.error(f"指标计算失败: {name}, 错误: {e}")
+            raise
+
+    def clear_indicator_cache(self) -> None:
+        """清空指标缓存"""
+        self._indicator_cache.clear()
+        logger.debug("策略指标缓存已清空")
+
+    def update_symbols(self, symbols: List[str]) -> None:
+        """
+        更新策略交易符号列表。
+
+        目的：
+        1. 支持多符号策略，管理策略关注的交易品种
+        2. 提供符号验证和去重
+        3. 更新策略状态和元数据
+
+        参数：
+            symbols: 交易符号列表
+
+        实现方案：
+        1. 验证符号列表有效性
+        2. 更新self.symbols属性
+        3. 记录更新日志
+        """
+        if not isinstance(symbols, list):
+            raise ValueError("symbols 必须为列表")
+
+        # 去重
+        unique_symbols = list(dict.fromkeys(symbols))
+
+        self.symbols = unique_symbols
+        logger.debug(f"策略符号列表已更新: {len(self.symbols)} 个符号")
+
+    # ========================================================================
+    # 信号和数据方法
+    # ========================================================================
 
     def get_signals_df(self) -> pd.DataFrame:
         """
@@ -625,6 +834,7 @@ class Strategy(abc.ABC):
         1. 提供与事件驱动回测引擎兼容的信号计算接口
         2. 返回标量信号值（正数买入、负数卖出、0无信号），而非Signal对象列表
         3. 支持需要简单信号值的传统回测系统
+        4. 向后兼容：尝试使用向量化信号计算方法提高性能
 
         参数：
             symbol: 股票代码或交易品种标识符
@@ -635,19 +845,63 @@ class Strategy(abc.ABC):
             float: 交易信号值，正数表示买入信号强度，负数表示卖出信号强度，0表示无信号
 
         实现方案：
-        1. 默认返回0.0，表示无信号
-        2. 子类应重写此方法以提供实际的信号计算逻辑
-        3. 可基于data中的历史数据计算技术指标并生成信号值
-        4. 信号值大小可反映信号强度（如1.0强买入，-0.5弱卖出）
+        1. 优先尝试使用向量化信号计算方法（如果子类实现）
+        2. 如果向量化方法可用，使用它计算整个序列并提取当前日期信号
+        3. 如果向量化方法不可用，使用传统逐点计算（子类重写）
+        4. 提供默认实现返回0.0，子类应重写此方法或calculate_signals_vectorized方法
 
         使用方法：
         1. 事件驱动回测引擎调用：signal_value = strategy.calculate_signal(symbol, data, current_date)
         2. 子类重写示例：def calculate_signal(self, symbol, data, current_date): return 1.0 if condition else -1.0
         3. 信号值处理：if signal_value > 0: 执行买入；elif signal_value < 0: 执行卖出
+        4. 建议子类实现calculate_signals_vectorized方法以获得更好性能
         """
-        # 默认实现：使用generate_signals方法并转换为信号值
-        # 注意：这需要创建MarketData对象，但为了简化，我们返回0.0
-        # 子类应该重写此方法以提供实际的信号计算
+        # 检查是否实现了向量化信号计算方法
+        vectorized_method = getattr(self, 'calculate_signals_vectorized', None)
+        if (vectorized_method is not None and
+            vectorized_method.__func__ is not Strategy.calculate_signals_vectorized):
+            # 子类实现了向量化方法，使用它
+            try:
+                # 计算整个时间序列的信号
+                signals_series = vectorized_method(data)
+
+                # 提取当前日期的信号
+                if current_date in signals_series.index:
+                    signal_value = signals_series.loc[current_date]
+                else:
+                    # 查找最接近的日期
+                    mask = signals_series.index <= current_date
+                    if mask.any():
+                        signal_value = signals_series[mask].iloc[-1]
+                    else:
+                        signal_value = 0.0
+
+                # 确保返回浮点数
+                return float(signal_value)
+
+            except Exception as e:
+                logger.warning(
+                    f"向量化信号计算方法失败，回退到默认实现: {e}"
+                )
+                # 继续执行默认实现
+
+        # 检查子类是否重写了此方法（通过比较方法对象）
+        current_method = self.calculate_signal
+        base_method = Strategy.calculate_signal
+        if current_method.__func__ is not base_method:
+            # 子类重写了此方法，调用子类实现
+            return current_method(symbol, data, current_date)
+
+        # 默认实现：返回0.0，表示无信号
+        # 发出警告鼓励子类实现向量化方法
+        import warnings
+        warnings.warn(
+            f"策略 '{self.name}' 未实现 calculate_signal 或 calculate_signals_vectorized 方法，"
+            f"返回默认信号值0.0。建议实现向量化方法以提高性能。",
+            UserWarning,
+            stacklevel=2
+        )
+
         return 0.0
 
 

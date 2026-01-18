@@ -33,6 +33,26 @@ from .indicators import (
     calculate_macd
 )
 
+from .indicators_base import (
+    IndicatorType,
+    Indicator,
+    IndicatorRegistry,
+    CachedIndicator,
+    cached_indicator,
+    default_cached_indicator
+)
+
+from .utils import (
+    vectorized_confirmation,
+    vectorized_crossover_detection,
+    SignalMetadata,
+    SignalSeries,
+    BatchIndicatorCalculator,
+    ParameterValidator,
+    validate_data_sufficiency,
+    align_time_series,
+)
+
 from .moving_average_crossover import (
     MovingAverageCrossover,
     create_moving_average_crossover_strategy
@@ -52,6 +72,24 @@ __all__ = [
     'calculate_ema',
     'calculate_rsi',
     'calculate_macd',
+
+    # Indicator base and registry
+    'IndicatorType',
+    'Indicator',
+    'IndicatorRegistry',
+    'CachedIndicator',
+    'cached_indicator',
+    'default_cached_indicator',
+
+    # Strategy utilities
+    'vectorized_confirmation',
+    'vectorized_crossover_detection',
+    'SignalMetadata',
+    'SignalSeries',
+    'BatchIndicatorCalculator',
+    'ParameterValidator',
+    'validate_data_sufficiency',
+    'align_time_series',
 
     # Concrete strategies
     'MovingAverageCrossover',

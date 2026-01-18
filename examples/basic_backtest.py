@@ -215,7 +215,7 @@ def download_market_data():
     print("Getting market data (with local caching)...")
 
     # Define symbols and date range
-    symbols = ["GOOGL"]
+    symbols = ["NVDA"]
     # symbols = ["AAPL", "MSFT", "GOOGL"]
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365 * 4)  # 4 years of data
@@ -581,11 +581,6 @@ def plot_candlestick(data, symbol=None, title="Candlestick Chart"):
 
         plt.tight_layout()
 
-        # Save figure
-        # filename = f'candlestick_{symbol}.png'
-        # plt.savefig(filename, dpi=150, bbox_inches='tight')
-        # print(f"Saved candlestick chart to '{filename}'")
-
         plt.show(block=False)
 
     except Exception as e:
@@ -618,8 +613,6 @@ def plot_results(result, title="Backtest Results"):
         ax3.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig('backtest_results.png', dpi=150, bbox_inches='tight')
-        print("\nSaved plot to 'backtest_results.png'")
         plt.show()
 
     except Exception as e:
@@ -662,7 +655,7 @@ def main():
         slow_period=30,
         ma_type='sma',
         use_volume=False,
-        min_crossover_strength=0.01,
+        min_crossover_strength=0.02,
         require_confirmation=True,
         confirmation_periods=2,
         position_sizing_params={

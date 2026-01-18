@@ -315,7 +315,7 @@ class EventDrivenBacktestEngine(BacktestEngine):
         trades = []
 
         for symbol, signal in signals.items():
-            if symbol not in self.current_prices or np.isnan(self.current_prices[symbol]):
+            if symbol not in self.current_prices or np.isnan(self.current_prices[symbol]) or abs(signal) < 1e-6:
                 continue
 
             current_price = self.current_prices[symbol]
@@ -411,7 +411,7 @@ class EventDrivenBacktestEngine(BacktestEngine):
         # Round to nearest whole share
         target_quantity = round(target_quantity)
 
-        return target_quantity
+        return target_quantity if target_quantity > 0 else 0
 
     def _update_positions(self, trades: List[Trade]) -> None:
         """Update positions based on executed trades."""

@@ -21,9 +21,13 @@
 """
 
 import pandas as pd
-from typing import Optional, Union, Tuple, List, Dict, Any
+from typing import Optional, Union, Tuple, List, Dict, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
+import functools
+import hashlib
+import pickle
+import numpy as np
 
 from ...utils.exceptions import IndicatorError, ValidationError
 from ...utils.logger import get_logger
@@ -90,6 +94,204 @@ class IndicatorResult:
     metadata: Optional[Dict[str, Any]] = None
 
 
+# ============================================================================
+# 缓存装饰器和缓存管理
+# ============================================================================
+
+class IndicatorCache:
+    """
+    技术指标缓存管理器。
+
+    目的：
+    1. 提供LRU缓存机制，加速重复指标计算
+    2. 支持内存和可选磁盘缓存，适应不同数据规模
+    3. 提供缓存统计和清理功能
+
+    实现方案：
+    1. 使用字典实现LRU缓存，最大缓存条目可配置
+    2. 缓存键基于输入数据和参数哈希，确保唯一性
+    3. 支持缓存禁用和手动清理
+    """
+
+    # 类级缓存存储
+    _cache: Dict[str, IndicatorResult] = {}
+    _cache_enabled: bool = True
+    _max_cache_size: int = 128
+    _cache_hits: int = 0
+    _cache_misses: int = 0
+
+    @classmethod
+    def generate_cache_key(cls, func_name: str, *args, **kwargs) -> str:
+        """
+        生成缓存键。
+
+        目的：
+        1. 为指标计算函数创建唯一标识符
+        2. 基于输入数据和参数生成确定性哈希
+        3. 处理pandas Series/DataFrame等不可哈希对象
+
+        实现方案：
+        1. 将函数名称作为键前缀
+        2. 对参数进行序列化并计算SHA256哈希
+        3. 对pandas对象使用自定义哈希（索引哈希+数据哈希）
+        4. 忽略不影响计算结果的参数（如adjust参数为True/False）
+        """
+        import io
+
+        def hash_object(obj):
+            """递归哈希对象"""
+            if isinstance(obj, pd.Series):
+                # 对Series计算确定性哈希：使用索引哈希和值哈希
+                try:
+                    # 使用pandas内置哈希函数（如果可用）
+                    import pandas.api.types as pd_types
+                    if pd_types.is_numeric_dtype(obj):
+                        # 数值类型：使用tobytes（更快）
+                        # 注意：NaN值会导致tobytes产生特定字节模式，可以接受
+                        value_hash = hashlib.md5(obj.values.tobytes()).hexdigest()[:16]
+                    else:
+                        # 非数值类型：使用pickle
+                        value_hash = hashlib.md5(pickle.dumps(obj.values)).hexdigest()[:16]
+                    index_hash = hashlib.md5(pickle.dumps(obj.index)).hexdigest()[:16]
+                    return f"series_{obj.shape}_{index_hash}_{value_hash}"
+                except Exception:
+                    # 回退到简单哈希
+                    return f"series_{id(obj)}_{obj.shape}"
+            elif isinstance(obj, pd.DataFrame):
+                # 对DataFrame计算哈希：哈希每列的形状和值
+                try:
+                    col_hashes = []
+                    for col in obj.columns:
+                        col_obj = obj[col]
+                        if pd.api.types.is_numeric_dtype(col_obj):
+                            col_hash = hashlib.md5(col_obj.values.tobytes()).hexdigest()[:12]
+                        else:
+                            col_hash = hashlib.md5(pickle.dumps(col_obj.values)).hexdigest()[:12]
+                        col_hashes.append(f"{col}:{col_hash}")
+                    index_hash = hashlib.md5(pickle.dumps(obj.index)).hexdigest()[:12]
+                    return f"df_{obj.shape}_{index_hash}_{'_'.join(col_hashes)}"
+                except Exception:
+                    return f"df_{id(obj)}_{obj.shape}"
+            elif isinstance(obj, np.ndarray):
+                return f"array_{obj.shape}_{hashlib.md5(obj.tobytes()).hexdigest()[:16]}"
+            elif hasattr(obj, '__dict__'):
+                return str(hash(frozenset(obj.__dict__.items())))
+            else:
+                try:
+                    return str(hash(obj))
+                except TypeError:
+                    return str(hash(repr(obj)))
+
+        # 构建键组件
+        components = [func_name]
+
+        # 添加位置参数哈希
+        for arg in args:
+            components.append(hash_object(arg))
+
+        # 添加关键字参数哈希（排序以确保一致性）
+        for key in sorted(kwargs.keys()):
+            components.append(f"{key}={hash_object(kwargs[key])}")
+
+        # 连接组件并计算最终哈希
+        key_string = "|".join(components)
+        return hashlib.sha256(key_string.encode()).hexdigest()[:32]
+
+    @classmethod
+    def cached_indicator(cls, func: Callable) -> Callable:
+        """
+        缓存装饰器。
+
+        目的：
+        1. 自动缓存指标计算结果，避免重复计算
+        2. 提供透明的缓存逻辑，不影响原有接口
+        3. 支持缓存统计和性能监控
+
+        实现方案：
+        1. 包装原始函数，先检查缓存
+        2. 缓存未命中时计算结果并存储
+        3. 实现LRU淘汰策略防止内存溢出
+        4. 提供缓存命中率统计
+
+        使用方法：
+        1. 作为装饰器应用于指标计算方法
+        2. 自动生效，无需修改调用代码
+        """
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if not cls._cache_enabled:
+                return func(*args, **kwargs)
+
+            # 生成缓存键
+            cache_key = cls.generate_cache_key(func.__name__, *args, **kwargs)
+
+            # 检查缓存
+            if cache_key in cls._cache:
+                cls._cache_hits += 1
+                logger.debug(f"缓存命中: {func.__name__} [key: {cache_key[:8]}]")
+                return cls._cache[cache_key]
+
+            # 缓存未命中，计算结果
+            cls._cache_misses += 1
+            result = func(*args, **kwargs)
+
+            # 存储结果（实施LRU淘汰）
+            if len(cls._cache) >= cls._max_cache_size:
+                # 简单淘汰：移除第一个键（非严格LRU但简单有效）
+                oldest_key = next(iter(cls._cache))
+                del cls._cache[oldest_key]
+                logger.debug(f"缓存淘汰: {oldest_key[:8]}")
+
+            cls._cache[cache_key] = result
+            logger.debug(f"缓存存储: {func.__name__} [key: {cache_key[:8]}]")
+
+            return result
+
+        return wrapper
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """清空缓存"""
+        cls._cache.clear()
+        cls._cache_hits = 0
+        cls._cache_misses = 0
+        logger.info("技术指标缓存已清空")
+
+    @classmethod
+    def disable_cache(cls) -> None:
+        """禁用缓存"""
+        cls._cache_enabled = False
+        logger.info("技术指标缓存已禁用")
+
+    @classmethod
+    def enable_cache(cls) -> None:
+        """启用缓存"""
+        cls._cache_enabled = True
+        logger.info("技术指标缓存已启用")
+
+    @classmethod
+    def get_cache_stats(cls) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        hit_rate = (cls._cache_hits / (cls._cache_hits + cls._cache_misses)
+                   if (cls._cache_hits + cls._cache_misses) > 0 else 0)
+
+        return {
+            "enabled": cls._cache_enabled,
+            "size": len(cls._cache),
+            "max_size": cls._max_cache_size,
+            "hits": cls._cache_hits,
+            "misses": cls._cache_misses,
+            "hit_rate": hit_rate,
+            "keys": list(cls._cache.keys())[:10]  # 前10个键作为示例
+        }
+
+    @classmethod
+    def set_max_cache_size(cls, size: int) -> None:
+        """设置最大缓存大小"""
+        cls._max_cache_size = size
+        logger.info(f"技术指标缓存最大大小设置为: {size}")
+
+
 class TechnicalIndicators:
     """
     技术指标计算工具类。
@@ -114,6 +316,7 @@ class TechnicalIndicators:
     """
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def simple_moving_average(
         prices: pd.Series,
         window: int = 20,
@@ -167,6 +370,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def exponential_moving_average(
         prices: pd.Series,
         span: int = 20,
@@ -216,6 +420,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def moving_average_convergence_divergence(
         prices: pd.Series,
         fast_period: int = 12,
@@ -296,6 +501,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def relative_strength_index(
         prices: pd.Series,
         period: int = 14
@@ -367,6 +573,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def bollinger_bands(
         prices: pd.Series,
         window: int = 20,
@@ -450,6 +657,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def average_true_range(
         high: pd.Series,
         low: pd.Series,
@@ -512,6 +720,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def on_balance_volume(
         close: pd.Series,
         volume: pd.Series
@@ -584,6 +793,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def stochastic_oscillator(
         high: pd.Series,
         low: pd.Series,
@@ -676,6 +886,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def volume_weighted_average_price(
         close: pd.Series,
         volume: pd.Series,
@@ -747,6 +958,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def ichimoku_cloud(
         high: pd.Series,
         low: pd.Series,
@@ -852,6 +1064,7 @@ class TechnicalIndicators:
         )
 
     @staticmethod
+    @IndicatorCache.cached_indicator
     def calculate_all_indicators(
         data: pd.DataFrame,
         close_col: str = 'close',
@@ -914,6 +1127,35 @@ class TechnicalIndicators:
             results['vwap'] = TechnicalIndicators.volume_weighted_average_price(close, volume)
 
         return results
+
+    # ========================================================================
+    # 缓存管理方法（委托给IndicatorCache）
+    # ========================================================================
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """清空技术指标缓存"""
+        IndicatorCache.clear_cache()
+
+    @classmethod
+    def disable_cache(cls) -> None:
+        """禁用技术指标缓存"""
+        IndicatorCache.disable_cache()
+
+    @classmethod
+    def enable_cache(cls) -> None:
+        """启用技术指标缓存"""
+        IndicatorCache.enable_cache()
+
+    @classmethod
+    def get_cache_stats(cls) -> Dict[str, Any]:
+        """获取技术指标缓存统计信息"""
+        return IndicatorCache.get_cache_stats()
+
+    @classmethod
+    def set_max_cache_size(cls, size: int) -> None:
+        """设置技术指标缓存最大大小"""
+        IndicatorCache.set_max_cache_size(size)
 
 
 # Convenience functions for common indicator calculations
