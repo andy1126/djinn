@@ -516,7 +516,7 @@ class EventDrivenBacktestEngine(BacktestEngine):
 
         for symbol, position in self.open_positions.items():
             if symbol in self.current_prices and not np.isnan(self.current_prices[symbol]):
-                position.market_value = abs(position.quantity) * self.current_prices[symbol]
+                position.market_value = position.quantity * self.current_prices[symbol]
 
                 # Calculate unrealized P&L
                 if position.quantity != 0:

@@ -20,7 +20,6 @@
 3. 批量计算所有指标：indicators = TechnicalIndicators.calculate_all_indicators(data)
 """
 
-import numpy as np
 import pandas as pd
 from typing import Optional, Union, Tuple, List, Dict, Any
 from dataclasses import dataclass

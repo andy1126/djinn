@@ -21,12 +21,10 @@
 """
 
 import pandas as pd
-import numpy as np
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Dict, Optional, Any
 
-from .base import Strategy, Signal, SignalType, PositionSizing
-from .indicators import TechnicalIndicators
+from .base import Strategy, PositionSizing
 from ...data.market_data import MarketData
 from ...utils.exceptions import StrategyError
 from ...utils.logger import logger
@@ -57,9 +55,9 @@ class MovingAverageCrossover(Strategy):
     """
 
     def __init__(
-        self,
-        parameters: Dict[str, Any],
-        position_sizing: Optional[PositionSizing] = None,
+            self,
+            parameters: Dict[str, Any],
+            position_sizing: Optional[PositionSizing] = None,
     ):
         """
         初始化移动平均线交叉策略。
@@ -177,231 +175,7 @@ class MovingAverageCrossover(Strategy):
                 details={"error": str(e)}
             )
 
-    def calculate_indicators(self, data: MarketData) -> Dict[str, pd.Series]:
-        """
-        计算技术指标。
-
-        目的：
-        1. 根据配置计算快速和慢速移动平均线
-        2. 基于移动平均线计算交叉信号
-        3. 准备指标字典供信号生成和策略分析使用
-
-        参数：
-            data: MarketData对象，包含OHLCV市场数据
-
-        返回：
-            Dict[str, pd.Series]: 指标字典，键为指标名称，值为pandas Series
-
-        实现方案：
-        1. 从市场数据中提取指定符号的收盘价数据
-        2. 根据ma_type参数计算SMA或EMA：使用TechnicalIndicators工具类
-        3. 调用_calculate_crossover_signals方法计算交叉信号
-        4. 构建指标字典包含：fast_ma、slow_ma、crossover_signal
-        5. 如果配置use_volume=True，额外计算成交量移动平均线
-
-        使用方法：
-        1. 通常通过update方法自动调用，无需手动调用
-        2. 计算结果存储在self.fast_ma、self.slow_ma、self.crossover_signals中
-        3. 可通过self.indicators访问最近计算的指标字典
-        """
-        try:
-            if not self.symbol:
-                raise StrategyError("Strategy not initialized - no symbol set")
-
-            # Get symbol data from market data object
-            symbol_data = self._get_symbol_dataframe(data, self.symbol)
-            if symbol_data is None or symbol_data.empty:
-                raise StrategyError(f"No data found for symbol: {self.symbol}")
-
-            close_prices = symbol_data['close']
-
-            # Calculate moving averages based on configured type
-            ma_type = self.parameters['ma_type']
-            fast_period = int(self.parameters['fast_period'])
-            slow_period = int(self.parameters['slow_period'])
-
-            if ma_type == 'sma':
-                # Calculate SMAs
-                fast_ma_result = TechnicalIndicators.simple_moving_average(
-                    close_prices, window=fast_period
-                )
-                slow_ma_result = TechnicalIndicators.simple_moving_average(
-                    close_prices, window=slow_period
-                )
-
-                self.fast_ma = fast_ma_result.values
-                self.slow_ma = slow_ma_result.values
-
-            elif ma_type == 'ema':
-                # Calculate EMAs
-                fast_ma_result = TechnicalIndicators.exponential_moving_average(
-                    close_prices, span=fast_period
-                )
-                slow_ma_result = TechnicalIndicators.exponential_moving_average(
-                    close_prices, span=slow_period
-                )
-
-                self.fast_ma = fast_ma_result.values
-                self.slow_ma = slow_ma_result.values
-
-            else:
-                raise StrategyError(
-                    f"Unsupported moving average type: {ma_type}",
-                    strategy_name=self.name,
-                    parameters=self.parameters
-                )
-
-            # Calculate crossover signals
-            self._calculate_crossover_signals()
-
-            # Prepare indicators dictionary
-            indicators = {
-                'fast_ma': self.fast_ma,
-                'slow_ma': self.slow_ma,
-                'crossover_signal': self.crossover_signals
-            }
-
-            # Add volume indicator if configured
-            if self.parameters.get('use_volume', False):
-                volume = symbol_data['volume']
-                # Calculate volume moving average
-                volume_ma = volume.rolling(window=20).mean()
-                indicators['volume_ma'] = volume_ma
-
-            logger.debug(f"Calculated indicators for {self.symbol}")
-            return indicators
-
-        except Exception as e:
-            raise StrategyError(
-                "Failed to calculate indicators for MovingAverageCrossover strategy",
-                strategy_name=self.name,
-                parameters=self.parameters,
-                details={"error": str(e)}
-            )
-
-    def generate_signals(self, data: MarketData) -> List[Signal]:
-        """
-        基于移动平均线交叉生成交易信号。
-
-        目的：
-        1. 分析移动平均线交叉信号，生成具体的交易指令
-        2. 应用信号确认机制和强度阈值过滤，提高信号质量
-        3. 封装信号信息为Signal对象，便于回测引擎处理
-
-        参数：
-            data: MarketData对象，包含OHLCV市场数据
-
-        返回：
-            List[Signal]: Signal对象列表，可能为空列表（无信号）
-
-        实现方案：
-        1. 检查指标是否已计算，如未计算则先调用calculate_indicators
-        2. 获取最新的交叉信号值
-        3. 如果配置require_confirmation=True，验证信号是否持续了confirmation_periods个周期
-        4. 应用min_crossover_strength阈值过滤微弱信号
-        5. 根据信号值生成买入或卖出Signal对象
-        6. 基于快慢线差值计算信号强度
-
-        使用方法：
-        1. 通常通过update方法自动调用，无需手动调用
-        2. 返回的信号列表可直接传递给回测引擎执行
-        """
-        try:
-            if not self.symbol:
-                raise StrategyError("Strategy not initialized - no symbol set")
-
-            if self.fast_ma is None or self.slow_ma is None or self.crossover_signals is None:
-                # Calculate indicators first
-                self.calculate_indicators(data)
-
-            symbol_data = self._get_symbol_dataframe(data, self.symbol)
-            if symbol_data is None or symbol_data.empty:
-                raise StrategyError(f"No data found for symbol: {self.symbol}")
-
-            signals = []
-            close_prices = symbol_data['close']
-
-            # Get the latest data point
-            latest_date = close_prices.index[-1]
-            latest_close = close_prices.iloc[-1]
-
-            # Get latest crossover signal
-            latest_signal = self.crossover_signals.iloc[-1] if not self.crossover_signals.empty else 0
-
-            # Apply confirmation requirement if configured
-            if self.parameters.get('require_confirmation', True):
-                confirmation_periods = self.parameters.get('confirmation_periods', 2)
-
-                if len(self.crossover_signals) >= confirmation_periods:
-                    # Check if signal has been consistent for confirmation periods
-                    recent_signals = self.crossover_signals.iloc[-confirmation_periods:]
-                    if not (recent_signals == latest_signal).all():
-                        # Signal not confirmed, return no signal
-                        return signals
-
-            # Apply minimum crossover strength threshold
-            if abs(latest_signal) < self.parameters.get('min_crossover_strength', 0.1):
-                return signals
-
-            # Generate signal based on crossover
-            if latest_signal > 0:
-                # Bullish crossover: fast MA crosses above slow MA
-                signal_type = SignalType.BUY
-                reason = f"Bullish MA crossover: fast MA ({self.parameters['fast_period']}) crossed above slow MA ({self.parameters['slow_period']})"
-
-            elif latest_signal < 0:
-                # Bearish crossover: fast MA crosses below slow MA
-                signal_type = SignalType.SELL
-                reason = f"Bearish MA crossover: fast MA ({self.parameters['fast_period']}) crossed below slow MA ({self.parameters['slow_period']})"
-
-            else:
-                # No crossover
-                return signals
-
-            # Calculate signal strength based on crossover magnitude
-            if self.fast_ma is not None and self.slow_ma is not None:
-                fast_val = self.fast_ma.iloc[-1]
-                slow_val = self.slow_ma.iloc[-1]
-
-                if slow_val != 0:
-                    # Strength based on percentage difference
-                    strength = abs(fast_val - slow_val) / slow_val
-                    strength = min(strength, 1.0)  # Cap at 1.0
-                else:
-                    strength = 0.5  # Default strength
-            else:
-                strength = 0.5
-
-            # Create signal
-            signal = self._create_signal(
-                timestamp=latest_date,
-                symbol=self.symbol,
-                signal_type=signal_type,
-                price=latest_close,
-                strength=strength,
-                reason=reason,
-                metadata={
-                    'fast_period': self.parameters['fast_period'],
-                    'slow_period': self.parameters['slow_period'],
-                    'ma_type': self.parameters['ma_type'],
-                    'crossover_value': latest_signal
-                }
-            )
-
-            signals.append(signal)
-            logger.info(f"Generated {signal_type.value} signal for {self.symbol}: {reason}")
-
-            return signals
-
-        except Exception as e:
-            raise StrategyError(
-                "Failed to generate signals for MovingAverageCrossover strategy",
-                strategy_name=self.name,
-                parameters=self.parameters,
-                details={"error": str(e)}
-            )
-
-    def calculate_signals_vectorized(self, data: pd.DataFrame) -> pd.Series:
+    def _calculate_signals_vectorized(self, data: pd.DataFrame) -> pd.Series:
         """
         Calculate signals using vectorized operations for vectorized backtesting.
 
@@ -438,26 +212,35 @@ class MovingAverageCrossover(Strategy):
                     parameters=self.parameters
                 )
 
+            # Fill NaN values for moving averages (forward fill)
+            fast_ma = fast_ma.ffill()
+            slow_ma = slow_ma.ffill()
+
             # Calculate crossover signals
             signals = pd.Series(0, index=close_prices.index)
 
             # Bullish crossover: fast MA crosses above slow MA
-            bullish = (fast_ma > slow_ma) & (fast_ma.shift() <= slow_ma.shift())
+            bullish = (fast_ma > slow_ma)
             signals[bullish] = 1
 
             # Bearish crossover: fast MA crosses below slow MA
-            bearish = (fast_ma < slow_ma) & (fast_ma.shift() >= slow_ma.shift())
+            bearish = (fast_ma < slow_ma)
             signals[bearish] = -1
 
             # Apply confirmation requirement if configured
             if self.parameters.get('require_confirmation', True):
                 confirmation_periods = self.parameters.get('confirmation_periods', 2)
 
+                # Create state series: 1 when fast_ma > slow_ma, -1 when fast_ma < slow_ma, 0 otherwise
+                ma_state = pd.Series(0, index=close_prices.index)
+                ma_state[fast_ma > slow_ma] = 1
+                ma_state[fast_ma < slow_ma] = -1
+
                 # Create confirmed signals
                 confirmed_signals = pd.Series(0, index=signals.index)
 
                 for i in range(confirmation_periods, len(signals)):
-                    window = signals.iloc[i-confirmation_periods:i+1]
+                    window = signals.iloc[i - confirmation_periods:i + 1]
 
                     # Check if all signals in window are the same and non-zero
                     if window.nunique() == 1 and window.iloc[0] != 0:
@@ -471,7 +254,7 @@ class MovingAverageCrossover(Strategy):
                 crossover_strength = (fast_ma - slow_ma).abs() / slow_ma.abs()
 
                 # Filter signals by strength
-                strength_threshold = self.parameters['min_crossover_strength']
+                strength_threshold = self.parameters.get('min_crossover_strength', 0.1)
                 weak_signals = crossover_strength < strength_threshold
                 signals[weak_signals] = 0
 
@@ -487,10 +270,10 @@ class MovingAverageCrossover(Strategy):
             )
 
     def calculate_signal(
-        self,
-        symbol: str,
-        data: pd.DataFrame,
-        current_date: datetime,
+            self,
+            symbol: str,
+            data: pd.DataFrame,
+            current_date: datetime,
     ) -> float:
         """
         Calculate trading signal for a specific symbol and date.
@@ -509,7 +292,7 @@ class MovingAverageCrossover(Strategy):
                 return 0.0
 
             # Use vectorized signal calculation for efficiency
-            signals = self.calculate_signals_vectorized(data)
+            signals = self._calculate_signals_vectorized(data)
 
             # Get the signal for the current date
             # If current_date is not in the index, use the last available signal
@@ -528,38 +311,6 @@ class MovingAverageCrossover(Strategy):
         except Exception as e:
             logger.warning(f"Error calculating signal for {symbol}: {e}")
             return 0.0
-
-    def _calculate_crossover_signals(self) -> None:
-        """Calculate crossover signals from fast and slow moving averages."""
-        if self.fast_ma is None or self.slow_ma is None:
-            raise StrategyError(
-                "Moving averages not calculated",
-                strategy_name=self.name,
-                parameters=self.parameters
-            )
-
-        # Initialize signals series
-        self.crossover_signals = pd.Series(0, index=self.fast_ma.index)
-
-        # Calculate where fast MA crosses above slow MA (bullish)
-        bullish_cross = (self.fast_ma > self.slow_ma) & (self.fast_ma.shift() <= self.slow_ma.shift())
-
-        # Calculate where fast MA crosses below slow MA (bearish)
-        bearish_cross = (self.fast_ma < self.slow_ma) & (self.fast_ma.shift() >= self.slow_ma.shift())
-
-        # Assign signal values
-        # Use continuous values instead of binary for signal strength
-        ma_diff = self.fast_ma - self.slow_ma
-        normalized_diff = ma_diff / self.slow_ma.abs()  # Percentage difference
-
-        # Apply to crossover points
-        self.crossover_signals[bullish_cross] = normalized_diff[bullish_cross]
-        self.crossover_signals[bearish_cross] = normalized_diff[bearish_cross]
-
-        # Optional: Add some persistence to signals between crossovers
-        # For simplicity, we keep signals only at crossover points
-
-        logger.debug(f"Crossover signals calculated: {self.crossover_signals[self.crossover_signals != 0].count()} crossovers")
 
     def _validate_data_sufficiency(self, data: MarketData) -> None:
         """
@@ -611,55 +362,6 @@ class MovingAverageCrossover(Strategy):
             # Actual indicator calculation will raise appropriate error
             logger.warning(f"Data sufficiency validation failed: {e}")
 
-    def _get_symbol_dataframe(self, data: MarketData, symbol: str) -> pd.DataFrame:
-        """
-        Extract DataFrame for a specific symbol from market data.
-
-        Args:
-            data: MarketData object containing OHLCV data
-            symbol: Symbol to extract data for
-
-        Returns:
-            DataFrame with OHLCV data for the symbol
-
-        Raises:
-            StrategyError: If data cannot be extracted
-        """
-        try:
-            # Handle different data types
-            if hasattr(data, 'get_symbol_data'):
-                # Data has get_symbol_data method
-                return data.get_symbol_data(symbol)
-            elif hasattr(data, 'to_dataframe'):
-                # MarketData object with to_dataframe method
-                df = data.to_dataframe()
-                # Check if the symbol matches
-                if hasattr(data, 'symbol') and data.symbol == symbol:
-                    return df
-                else:
-                    # If symbol doesn't match, still return the dataframe
-                    # (assuming single symbol data)
-                    return df
-            elif isinstance(data, pd.DataFrame):
-                # DataFrame directly - assume it's for the requested symbol
-                return data
-            elif isinstance(data, dict) and symbol in data:
-                # Dictionary mapping symbols to dataframes
-                return data[symbol]
-            else:
-                raise StrategyError(
-                    f"Cannot extract data for symbol {symbol} from data object",
-                    strategy_name=self.name,
-                    parameters=self.parameters,
-                    details={"data_type": type(data).__name__, "symbol": symbol}
-                )
-        except Exception as e:
-            raise StrategyError(
-                f"Failed to extract data for symbol {symbol}",
-                strategy_name=self.name,
-                parameters=self.parameters,
-                details={"error": str(e), "symbol": symbol}
-            )
 
     def get_parameters_summary(self) -> Dict[str, Any]:
         """
@@ -688,14 +390,14 @@ class MovingAverageCrossover(Strategy):
 
 # Convenience function for creating strategy
 def create_moving_average_crossover_strategy(
-    fast_period: int = 10,
-    slow_period: int = 30,
-    ma_type: str = 'sma',
-    use_volume: bool = False,
-    min_crossover_strength: float = 0.1,
-    require_confirmation: bool = True,
-    confirmation_periods: int = 2,
-    position_sizing_params: Optional[Dict[str, Any]] = None
+        fast_period: int = 10,
+        slow_period: int = 30,
+        ma_type: str = 'sma',
+        use_volume: bool = False,
+        min_crossover_strength: float = 0.1,
+        require_confirmation: bool = True,
+        confirmation_periods: int = 2,
+        position_sizing_params: Optional[Dict[str, Any]] = None
 ) -> MovingAverageCrossover:
     """
     Create a Moving Average Crossover strategy with specified parameters.

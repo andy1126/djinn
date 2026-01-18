@@ -218,7 +218,7 @@ def download_market_data():
     symbols = ["GOOGL"]
     # symbols = ["AAPL", "MSFT", "GOOGL"]
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=365 * 2)  # 2 years of data
+    start_date = end_date - timedelta(days=365 * 4)  # 4 years of data
 
     # Get data for each symbol
     data = {}
@@ -286,9 +286,9 @@ def run_event_driven_backtest(data, strategy):
         commission=0.001,      # 0.1% commission
         slippage=0.0005,       # 0.05% slippage
         allow_short=False,
-        max_position_size=0.1,  # 10% max position size
-        stop_loss=0.1,          # 10% stop loss
-        take_profit=0.2         # 20% take profit
+        max_position_size=0.5,  # 10% max position size
+        stop_loss=0.2,          # 10% stop loss
+        take_profit=0.4         # 20% take profit
     )
 
     # Run backtest on first symbol only for simplicity
@@ -406,6 +406,98 @@ def analyze_results(result):
         print(f"  Conditional VaR (95%): {result.conditional_var:.2%}")
 
     return result
+
+
+def print_detailed_trades(result):
+    """Print detailed information about all trades in a user-friendly format."""
+    print("\n" + "="*60)
+    print("Detailed Trade Information")
+    print("="*60)
+
+    if not result.trades:
+        print("No trades executed during the backtest period.")
+        return
+
+    print(f"\nTotal Trades: {len(result.trades)}")
+    print("-" * 100)
+
+    # Print header
+    print(f"{'Date':<12} {'Time':<8} {'Symbol':<8} {'Side':<6} {'Quantity':<10} {'Price':<10} {'Value':<12} {'Commission':<12} {'Slippage':<10} {'Total Cost':<12}")
+    print("-" * 100)
+
+    # Print each trade
+    for i, trade in enumerate(result.trades, 1):
+        # Calculate trade value (absolute value since quantity can be negative for sells)
+        trade_value = abs(trade.quantity) * trade.price
+
+        # Calculate total cost (commission + slippage)
+        total_cost = trade.commission + trade.slippage
+
+        # Format timestamp
+        trade_date = trade.timestamp.strftime("%Y-%m-%d")
+        trade_time = trade.timestamp.strftime("%H:%M:%S")
+
+        # Format numeric values
+        quantity_str = f"{trade.quantity:,.2f}"
+        price_str = f"${trade.price:,.2f}"
+        value_str = f"${trade_value:,.2f}"
+        commission_str = f"${trade.commission:,.2f}"
+        slippage_str = f"${trade.slippage:,.2f}"
+        total_cost_str = f"${total_cost:,.2f}"
+
+        # Print trade details
+        print(f"{trade_date:<12} {trade_time:<8} {trade.symbol:<8} {trade.side:<6} {quantity_str:<10} {price_str:<10} {value_str:<12} {commission_str:<12} {slippage_str:<10} {total_cost_str:<12}")
+
+    # Print summary
+    print("-" * 100)
+
+    # Calculate totals
+    total_buys = sum(1 for t in result.trades if t.side.lower() == 'buy')
+    total_sells = sum(1 for t in result.trades if t.side.lower() == 'sell')
+    total_quantity = sum(t.quantity for t in result.trades)
+    total_value = sum(abs(t.quantity) * t.price for t in result.trades)
+    total_commission = sum(t.commission for t in result.trades)
+    total_slippage = sum(t.slippage for t in result.trades)
+    total_cost = total_commission + total_slippage
+
+    print(f"\nTrade Summary:")
+    print(f"  Total Buys: {total_buys}")
+    print(f"  Total Sells: {total_sells}")
+    print(f"  Net Quantity: {total_quantity:,.2f}")
+    print(f"  Total Trade Value: ${total_value:,.2f}")
+    print(f"  Total Commission: ${total_commission:,.2f}")
+    print(f"  Total Slippage: ${total_slippage:,.2f}")
+    print(f"  Total Transaction Costs: ${total_cost:,.2f}")
+
+    # Additional analysis by symbol
+    print("\nTrades by Symbol:")
+    trades_by_symbol = {}
+    for trade in result.trades:
+        symbol = trade.symbol
+        if symbol not in trades_by_symbol:
+            trades_by_symbol[symbol] = {
+                'buys': 0,
+                'sells': 0,
+                'total_quantity': 0,
+                'total_value': 0,
+                'total_commission': 0,
+                'total_slippage': 0
+            }
+
+        trades_by_symbol[symbol]['total_quantity'] += trade.quantity
+        trades_by_symbol[symbol]['total_value'] += abs(trade.quantity) * trade.price
+        trades_by_symbol[symbol]['total_commission'] += trade.commission
+        trades_by_symbol[symbol]['total_slippage'] += trade.slippage
+
+        if trade.side.lower() == 'buy':
+            trades_by_symbol[symbol]['buys'] += 1
+        else:
+            trades_by_symbol[symbol]['sells'] += 1
+
+    for symbol, stats in trades_by_symbol.items():
+        print(f"  {symbol}:")
+        print(f"    Buys: {stats['buys']}, Sells: {stats['sells']}, Net Quantity: {stats['total_quantity']:,.2f}")
+        print(f"    Total Value: ${stats['total_value']:,.2f}, Total Costs: ${stats['total_commission'] + stats['total_slippage']:,.2f}")
 
 
 def plot_candlestick(data, symbol=None, title="Candlestick Chart"):
@@ -559,7 +651,7 @@ def main():
     try:
         # Get first symbol from data dictionary
         symbol = list(data.keys())[0]
-        plot_candlestick(data, symbol=symbol, title=f"{symbol} Candlestick Chart")
+        # plot_candlestick(data, symbol=symbol, title=f"{symbol} Candlestick Chart")
     except Exception as e:
         print(f"   Warning: Could not plot candlestick chart: {e}")
 
@@ -570,7 +662,7 @@ def main():
         slow_period=30,
         ma_type='sma',
         use_volume=False,
-        min_crossover_strength=0.1,
+        min_crossover_strength=0.01,
         require_confirmation=True,
         confirmation_periods=2,
         position_sizing_params={
@@ -585,6 +677,9 @@ def main():
     # Run event-driven backtest
     event_driven_result = run_event_driven_backtest(data, strategy)
     analyze_results(event_driven_result)
+
+    # Print detailed trade information
+    print_detailed_trades(event_driven_result)
 
     # # Run vectorized backtest
     # vectorized_result = run_vectorized_backtest(data, strategy)

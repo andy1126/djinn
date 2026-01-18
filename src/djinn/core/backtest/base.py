@@ -427,13 +427,13 @@ class BacktestEngine(abc.ABC):
     """
 
     def __init__(
-        self,
-        initial_capital: float = 100000.0,
-        commission: float = 0.001,  # 0.1%
-        slippage: float = 0.0005,   # 0.05%
-        benchmark_symbol: Optional[str] = None,
-        risk_free_rate: float = 0.02,  # 2% annual
-        mode: BacktestMode = BacktestMode.EVENT_DRIVEN
+            self,
+            initial_capital: float = 100000.0,
+            commission: float = 0.001,  # 0.1%
+            slippage: float = 0.0005,  # 0.05%
+            benchmark_symbol: Optional[str] = None,
+            risk_free_rate: float = 0.02,  # 2% annual
+            mode: BacktestMode = BacktestMode.EVENT_DRIVEN
     ):
         """
         初始化回测引擎。
@@ -489,12 +489,12 @@ class BacktestEngine(abc.ABC):
 
     @abc.abstractmethod
     def run(
-        self,
-        strategy: Strategy,
-        data: Dict[str, pd.DataFrame],
-        start_date: datetime,
-        end_date: datetime,
-        **kwargs
+            self,
+            strategy: Strategy,
+            data: Dict[str, pd.DataFrame],
+            start_date: datetime,
+            end_date: datetime,
+            **kwargs
     ) -> BacktestResult:
         """
         执行回测。
@@ -549,11 +549,12 @@ class BacktestEngine(abc.ABC):
 
     @abc.abstractmethod
     def _initialize_backtest(
-        self,
-        strategy: Strategy,
-        data: Dict[str, pd.DataFrame],
-        start_date: datetime,
-        end_date: datetime
+            self,
+            strategy: Strategy,
+            data: Dict[str, pd.DataFrame],
+            start_date: datetime,
+            end_date: datetime,
+            frequency: str
     ) -> None:
         """
         初始化回测状态。
@@ -716,9 +717,9 @@ class BacktestEngine(abc.ABC):
         pass
 
     def validate_data(
-        self,
-        data: Dict[str, pd.DataFrame],
-        required_columns: List[str] = None
+            self,
+            data: Dict[str, pd.DataFrame],
+            required_columns: List[str] = None
     ) -> None:
         """
         验证回测输入数据。
@@ -799,10 +800,10 @@ class BacktestEngine(abc.ABC):
         logger.info(f"Data validation passed for {len(data)} symbols")
 
     def calculate_commission(
-        self,
-        quantity: float,
-        price: float,
-        side: str
+            self,
+            quantity: float,
+            price: float,
+            side: str
     ) -> float:
         """
         计算交易佣金。
@@ -849,10 +850,10 @@ class BacktestEngine(abc.ABC):
         return commission
 
     def calculate_slippage(
-        self,
-        quantity: float,
-        price: float,
-        side: str
+            self,
+            quantity: float,
+            price: float,
+            side: str
     ) -> float:
         """
         计算交易滑点成本。
