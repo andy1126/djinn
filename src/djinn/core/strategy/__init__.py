@@ -58,6 +58,15 @@ from .moving_average_crossover import (
     create_moving_average_crossover_strategy
 )
 
+from .parameter import (
+    Parameter,
+    param
+)
+
+from .simple import (
+    SimpleStrategy
+)
+
 __all__ = [
     # Base classes
     'Strategy',
@@ -93,5 +102,12 @@ __all__ = [
 
     # Concrete strategies
     'MovingAverageCrossover',
-    'create_moving_average_crossover_strategy'
+    'create_moving_average_crossover_strategy',
+
+    # 参数系统
+    'Parameter',
+    'param',
+
+    # 简化策略
+    'SimpleStrategy',
 ]
