@@ -140,7 +140,6 @@ Thumbs.db
 *.sqlite
 *.log
 cache/
-data/
 output/
 results/
 coverage_html/
