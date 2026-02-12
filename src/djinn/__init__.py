@@ -17,6 +17,13 @@ from .utils.logger import setup_logger
 # 设置默认日志器
 logger = setup_logger(__name__)
 
+# 简化策略框架的导入
+from djinn.core.strategy import (
+    SimpleStrategy,
+    param,
+    Parameter,
+)
+
 # 导出主要模块
 __all__ = [
     # 数据模块
@@ -34,6 +41,10 @@ __all__ = [
     "__author__",
     "__email__",
     "logger",
+    # 简化策略框架
+    "SimpleStrategy",
+    "param",
+    "Parameter",
 ]
 
 # 配置日志级别
