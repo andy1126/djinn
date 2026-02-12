@@ -24,6 +24,12 @@ class SimpleStrategy:
                 return np.where(fast_ma > slow_ma, 1, -1)
     """
 
+    # 默认策略名称，子类可以覆盖
+    name = "SimpleStrategy"
+
+    # 默认最小数据点要求
+    min_data_points = 20
+
     def __init__(self, **kwargs):
         """使用参数初始化策略。
 
@@ -67,6 +73,17 @@ class SimpleStrategy:
             param_def = self._param_definitions[name]
             validated[name] = param_def.validate(value)
         return validated
+
+    def initialize(self, market_data):
+        """初始化策略。
+
+        此方法由回测引擎在回测开始前调用。
+        子类可选择性覆盖此方法以执行自定义初始化。
+
+        参数:
+            market_data: MarketData 对象，包含初始市场数据
+        """
+        pass
 
     def signals(self, data):
         """生成交易信号。
