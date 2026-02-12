@@ -11,6 +11,37 @@ class Parameter:
     description: Optional[str] = None
     choices: Optional[List[Any]] = None
 
+    def validate(self, value):
+        """根据参数的约束条件验证值。
+
+        参数:
+            value: 要验证的值
+
+        返回:
+            验证后的值
+
+        抛出:
+            ValueError: 如果值违反约束条件
+        """
+        # 检查 choices
+        if self.choices is not None and value not in self.choices:
+            raise ValueError(
+                f"值 {value} 不在允许的选项中: {self.choices}"
+            )
+
+        # 检查数值约束
+        if self.min is not None and value < self.min:
+            raise ValueError(
+                f"值 {value} 低于最小值 {self.min}"
+            )
+
+        if self.max is not None and value > self.max:
+            raise ValueError(
+                f"值 {value} 高于最大值 {self.max}"
+            )
+
+        return value
+
 
 def param(default, *, min=None, max=None, description=None, choices=None):
     """创建参数声明。
