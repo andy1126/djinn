@@ -83,3 +83,28 @@ def test_simple_strategy_signals():
 
     assert isinstance(signals, (pd.Series, np.ndarray))
     assert len(signals) == 50
+
+
+def test_simple_strategy_vectorized_adapter():
+    """测试 SimpleStrategy 可用于向量化回测"""
+    from djinn.core.strategy.simple import SimpleStrategy
+    from djinn.core.strategy.parameter import param
+
+    class TestStrategy(SimpleStrategy):
+        fast = param(10)
+
+        def signals(self, data):
+            return np.where(
+                data['close'].rolling(self.params.fast).mean() > data['close'],
+                1, -1
+            )
+
+    strategy = TestStrategy()
+
+    # 测试 calculate_signals_vectorized 适配器
+    dates = pd.date_range('2020-01-01', periods=50, freq='D')
+    data = pd.DataFrame({'close': range(50)}, index=dates)
+
+    signals = strategy.calculate_signals_vectorized(data)
+    assert isinstance(signals, (pd.Series, np.ndarray))
+    assert len(signals) == 50
