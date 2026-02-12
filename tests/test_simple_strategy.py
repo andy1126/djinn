@@ -108,3 +108,34 @@ def test_simple_strategy_vectorized_adapter():
     signals = strategy.calculate_signals_vectorized(data)
     assert isinstance(signals, (pd.Series, np.ndarray))
     assert len(signals) == 50
+
+
+from datetime import datetime
+
+
+def test_simple_strategy_event_driven_adapter():
+    """测试 SimpleStrategy 可用于事件驱动回测"""
+    from djinn.core.strategy.simple import SimpleStrategy
+    from djinn.core.strategy.parameter import param
+
+    class TestStrategy(SimpleStrategy):
+        fast = param(10)
+
+        def signals(self, data):
+            return np.where(
+                data['close'].rolling(self.params.fast).mean() > data['close'],
+                1, -1
+            )
+
+    strategy = TestStrategy()
+
+    # 测试 calculate_signal 适配器
+    dates = pd.date_range('2020-01-01', periods=50, freq='D')
+    data = pd.DataFrame({'close': range(50)}, index=dates)
+
+    # 获取特定日期的信号
+    current_date = dates[30]
+    signal = strategy.calculate_signal('AAPL', data, current_date)
+
+    assert isinstance(signal, float)
+    assert signal in [-1.0, 0.0, 1.0]
