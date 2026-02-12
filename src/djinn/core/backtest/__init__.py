@@ -14,10 +14,8 @@
 
 from djinn.core.backtest.base import BacktestMode
 from djinn.core.backtest.event_driven import EventDrivenBacktestEngine
-from djinn.core.backtest.vectorized import VectorizedBacktestEngine
 
 __all__ = [
     'EventDrivenBacktestEngine',
-    'VectorizedBacktestEngine',
     'BacktestMode'
 ]

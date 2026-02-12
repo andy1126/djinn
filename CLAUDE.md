@@ -24,7 +24,7 @@ pre-commit install
 pytest
 
 # Run specific test file
-pytest tests/unit/test_strategy.py
+pytest tests/test_simple_strategy.py
 
 # Run tests with specific marker
 pytest -m "not slow"
@@ -63,7 +63,7 @@ hatch clean
 ### Running Examples
 ```bash
 # Examples are in the examples/ directory
-python examples/basic_backtest.py
+python examples/ma_crossover_simple_example.py
 ```
 
 ## High-level Architecture
@@ -77,15 +77,29 @@ Djinn is a multi-market quantitative backtesting framework with a layered archit
 - **DataCleaner**: Data validation and normalization
 
 ### 2. Strategy Layer (`src/djinn/core/strategy/`)
-- **Strategy**: Abstract base class defining `initialize()`, `generate_signals()`, `calculate_indicators()`
+
+#### Simplified Strategy Framework (Recommended)
+- **SimpleStrategy**: Simplified base class for quick strategy development (~15 lines)
+- **param()**: Declarative parameter definition with automatic validation
+- **Parameter**: Parameter descriptor class with validation rules
+
+#### Pre-built Strategies (`src/djinn/core/strategy/impl/`)
+- **RSIStrategy**: RSI overbought/oversold strategy
+- **BollingerBandsStrategy**: Bollinger Bands breakout strategy
+- **MACDStrategy**: MACD crossover strategy
+- **MeanReversionStrategy**: Mean reversion to moving average
+
+#### Legacy Strategy Framework
+- **Strategy**: Abstract base class with full lifecycle (advanced users)
 - **Signal**: Data class for trade signals with type, strength, and metadata
-- **PositionSizing**: Configurable position sizing methods (fixed fractional, Kelly, etc.)
-- **Indicators**: Technical indicator calculations (MA, MACD, RSI, etc.)
+- **PositionSizing**: Configurable position sizing methods
+- **Indicators**: Technical indicator calculations
 
 ### 3. Backtest Engine (`src/djinn/core/backtest/`)
-- **BacktestEngine**: Abstract base class supporting multiple execution modes (event-driven, vectorized, hybrid)
-- **BacktestResult**: Comprehensive result container with 50+ performance metrics
-- **Trade/Position**: Data classes representing executed trades and portfolio positions
+- **EventDrivenBacktestEngine**: Event-driven backtesting (precise simulation)
+- **VectorizedBacktestEngine**: Vectorized backtesting (high performance)
+- **BacktestResult**: Comprehensive result container with 30+ performance metrics
+- **Trade/Position**: Data classes representing executed trades and positions
 - **Fee Models**: Commission, slippage, tax calculations
 
 ### 4. Portfolio Management (`src/djinn/core/portfolio/`)
@@ -100,34 +114,72 @@ Djinn is a multi-market quantitative backtesting framework with a layered archit
 
 ### 6. Utilities (`src/djinn/utils/`)
 - **Logger**: Structured logging with loguru
-- **ConfigManager**: Centralized configuration from YAML files and environment variables
+- **ConfigManager**: Centralized configuration from YAML and environment variables
 - **DateUtils**: Market calendar and holiday handling
 - **Validator**: Data validation with Pydantic integration
 
 ## Key Patterns and Conventions
 
-### 1. Abstract Base Classes
-- Core components use ABCs to define interfaces (DataProvider, Strategy, BacktestEngine)
-- Implementations extend these ABCs (YahooFinanceProvider, MovingAverageCrossover)
+### 1. Strategy Development (SimpleStrategy - Recommended)
 
-### 2. Data Validation
+Use `SimpleStrategy` for new strategies:
+
+```python
+from djinn import SimpleStrategy, param
+import pandas as pd
+import numpy as np
+
+class MyStrategy(SimpleStrategy):
+    # Declare parameters with validation
+    fast = param(10, min=2, max=100, description="Fast MA period")
+    slow = param(30, min=5, max=200, description="Slow MA period")
+
+    def signals(self, data):
+        """Generate trading signals."""
+        fast_ma = data['close'].rolling(self.params.fast).mean()
+        slow_ma = data['close'].rolling(self.params.slow).mean()
+        return pd.Series(np.where(fast_ma > slow_ma, 1, -1), index=data.index)
+```
+
+### 2. Strategy Development (Legacy Strategy ABC)
+
+For advanced features, extend the full `Strategy` ABC:
+
+```python
+from djinn.core.strategy import Strategy
+
+class AdvancedStrategy(Strategy):
+    def initialize(self, market_data):
+        # Custom initialization
+        pass
+
+    def calculate_indicators(self, data):
+        # Calculate and cache indicators
+        pass
+
+    def generate_signals(self, data):
+        # Generate signals with metadata
+        pass
+```
+
+### 3. Data Validation
 - Extensive use of Pydantic for data validation in `utils/validation.py`
 - Custom exceptions (`ValidationError`, `StrategyError`, `BacktestError`) provide context
 
-### 3. Caching Strategy
+### 4. Caching Strategy
 - Multi-level caching: memory, disk, Redis (optional)
 - Cache keys incorporate request parameters and timestamps for freshness
 
-### 4. Configuration Management
+### 5. Configuration Management
 - Primary configuration in `configs/backtest_config.yaml`
 - Environment variables override YAML settings (see `.env.example`)
 - ConfigManager provides type-safe access to settings
 
-### 5. Logging
+### 6. Logging
 - Structured logging with loguru throughout
 - Log level configurable via environment variable `LOG_LEVEL`
 
-### 6. Error Handling
+### 7. Error Handling
 - Domain-specific exceptions with rich context (symbol, parameters, error details)
 - Retry logic with exponential backoff for network operations
 
@@ -159,5 +211,7 @@ Pre-commit hooks for code quality:
 - All new code should pass `mypy --strict` with no errors
 - Use `loguru` for logging instead of standard `logging` module
 - Data providers should extend `DataProvider` ABC and implement caching
-- Strategies should extend `Strategy` ABC and provide parameter validation
+- **New strategies should extend `SimpleStrategy`** for simplicity
+- Use `param()` for parameter declaration with automatic validation
+- Pre-built strategies go in `src/djinn/core/strategy/impl/`
 - Backtest engines should extend `BacktestEngine` ABC and support multiple modes

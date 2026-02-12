@@ -42,6 +42,12 @@ from .base import Trade
 
 logger = get_logger(__name__)
 
+__all__ = [
+    'calculate_all_metrics',
+    'calculate_benchmark_metrics',
+    'BacktestMetrics',
+]
+
 
 def calculate_all_metrics(
     returns: pd.Series,

@@ -36,7 +36,6 @@ import numpy as np
 from ...utils.exceptions import BacktestError, ValidationError
 from ...utils.logger import get_logger
 from ..strategy.base import Strategy
-from ..portfolio.base import Portfolio
 
 logger = get_logger(__name__)
 
