@@ -1,0 +1,53 @@
+# Djinn 回测配置示例 — 等权组合 + 季度再平衡
+# 用法:djinn run -c configs/portfolio.example.yaml --csv-dir <本地CSV目录>
+
+universe:
+  symbols: ["AAPL", "MSFT", "GOOGL"]
+  benchmark: "^GSPC"
+  market: US
+
+period:
+  start: "2020-01-01"
+  end: "2024-12-31"
+
+account:
+  initial_cash: 100000
+  currency: USD
+
+adjust: backward
+
+costs:
+  commission:
+    type: us
+    rate: 0.0005
+    min_commission: 1.0
+  slippage:
+    type: fixed_bps
+    bps: 5
+  enforce_price_limit: true
+  enforce_suspension: true
+  enforce_lot: true
+
+strategy:
+  name: MACrossover
+  params:
+    fast: 10
+    slow: 30
+
+portfolio:
+  mode: portfolio
+  allocation: equal
+  rebalance:
+    period: quarterly
+    threshold: 0.05
+
+risk:
+  max_single_weight: 0.4
+  max_total_position: 0.95
+
+output:
+  dir: "./results/portfolio"
+  export: ["csv", "excel"]
+  report: none
+
+risk_free_rate: 0.02

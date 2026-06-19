@@ -1,0 +1,139 @@
+"""行情缓存:Parquet 落盘 + 内存 LRU。
+
+缓存键 ``(provider, symbol, adjust, freq)``;命中范围不足时由 provider 增量
+拉取并合并。命中校验以 [start, end] 完全覆盖为准。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+from collections import OrderedDict
+from datetime import date
+from pathlib import Path
+from typing import Final
+
+import pandas as pd
+
+from djinn.data.schema import Adjust
+from djinn.utils.logging import get_logger
+
+_log = get_logger(__name__)
+
+DEFAULT_CACHE_DIR: Final[str] = ".cache/djinn"
+_MEMORY_LRU_SIZE: Final[int] = 32
+
+
+class DataCache:
+    """两级缓存:内存 LRU + 磁盘 Parquet。"""
+
+    def __init__(
+        self,
+        cache_dir: str | Path = DEFAULT_CACHE_DIR,
+        memory_size: int = _MEMORY_LRU_SIZE,
+    ) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._mem: OrderedDict[str, pd.DataFrame] = OrderedDict()
+        self._mem_size = memory_size
+
+    # ── 键 ──────────────────────────────────────────────
+    @staticmethod
+    def make_key(provider: str, symbol: str, adjust: Adjust) -> str:
+        return f"{provider}::{symbol}::{adjust.value}"
+
+    def _parquet_path(self, key: str) -> Path:
+        safe = key.replace("/", "_").replace("\\", "_")
+        return self.cache_dir / f"{safe}.parquet"
+
+    # ── 读 ──────────────────────────────────────────────
+    def get(self, provider: str, symbol: str, adjust: Adjust) -> pd.DataFrame | None:
+        """返回完整缓存(不按区间截断);无则 None。"""
+        key = self.make_key(provider, symbol, adjust)
+        if key in self._mem:
+            self._mem.move_to_end(key)
+            return self._mem[key]
+        path = self._parquet_path(key)
+        if path.exists():
+            try:
+                df = pd.read_parquet(path)
+                df.index = pd.to_datetime(df.index)
+                self._put_mem(key, df)
+                return df
+            except Exception as e:
+                _log.warning("缓存读取失败 %s: %s", path, e)
+                return None
+        return None
+
+    def _put_mem(self, key: str, df: pd.DataFrame) -> None:
+        self._mem[key] = df
+        self._mem.move_to_end(key)
+        while len(self._mem) > self._mem_size:
+            self._mem.popitem(last=False)
+
+    # ── 写 ──────────────────────────────────────────────
+    def put(self, provider: str, symbol: str, adjust: Adjust, df: pd.DataFrame) -> None:
+        key = self.make_key(provider, symbol, adjust)
+        self._put_mem(key, df)
+        path = self._parquet_path(key)
+        try:
+            df.to_parquet(path)
+        except Exception as e:
+            _log.warning("缓存写入失败 %s: %s", path, e)
+
+    # ── 合并 ────────────────────────────────────────────
+    def merge(
+        self,
+        provider: str,
+        symbol: str,
+        adjust: Adjust,
+        new: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """将新数据与已有缓存合并去重(按索引),写回并返回完整 df。"""
+        existing = self.get(provider, symbol, adjust)
+        if existing is not None and len(existing):
+            combined = pd.concat([existing, new])
+            combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        else:
+            combined = new.sort_index()
+        self.put(provider, symbol, adjust, combined)
+        return combined
+
+    # ── 区间覆盖 ────────────────────────────────────────
+    @staticmethod
+    def covers(df: pd.DataFrame | None, start: date, end: date) -> bool:
+        """缓存是否完整覆盖 [start, end]。"""
+        if df is None or len(df) == 0:
+            return False
+        return (
+            df.index[0].date() <= start and df.index[-1].date() >= end and len(df) > 0
+        )
+
+    def clear(self) -> None:
+        self._mem.clear()
+        # 不主动删磁盘文件,避免误删;提供 list 供 CLI 管理
+        for p in self.cache_dir.glob("*.parquet"):
+            with contextlib.suppress(OSError):
+                p.unlink()
+
+    def list_entries(self) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        for p in self.cache_dir.glob("*.parquet"):
+            try:
+                df = pd.read_parquet(p)
+                out.append(
+                    {
+                        "file": p.name,
+                        "rows": len(df),
+                        "start": str(pd.to_datetime(df.index).min().date()),
+                        "end": str(pd.to_datetime(df.index).max().date()),
+                    }
+                )
+            except Exception:
+                out.append({"file": p.name, "rows": -1, "error": True})
+        return out
+
+
+def env_cache_dir() -> str:
+    """从 env 读取缓存目录(默认 ``.cache/djinn``)。"""
+    return os.environ.get("DJINN_CACHE_DIR", DEFAULT_CACHE_DIR)

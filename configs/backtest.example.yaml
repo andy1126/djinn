@@ -1,0 +1,62 @@
+# Djinn 回测配置示例 — 单标的 MACrossover(美股)
+# 用法:djinn run -c configs/backtest.example.yaml --csv-dir <本地CSV目录>
+# 或:  djinn run -c configs/backtest.example.yaml (使用 yfinance 在线拉取)
+
+universe:
+  symbols: ["NVDA"]
+  benchmark: "^GSPC"        # 标普500;A 股用 000300.SH,港股用 ^HSI
+  market: US                # CN / HK / US;省略则按代码自动推断
+
+period:
+  start: "2020-01-01"
+  end: "2024-12-31"
+
+account:
+  initial_cash: 100000
+  currency: USD
+  # t_plus_1: 省略;A 股自动启用,美股/港股关闭
+
+# 复权:none / forward / backward(默认 backward,保证净值连续)
+adjust: backward
+
+# 费用与撮合
+costs:
+  commission:
+    type: default           # default 按市场 / china / us / hk
+    # rate: 0.0003          # 可选:覆盖佣金率
+    # min_commission: 5     # 可选:覆盖最低佣金
+  slippage:
+    type: fixed_bps         # zero / fixed_bps / random / volume_share
+    bps: 5
+  enforce_price_limit: true
+  enforce_suspension: true
+  enforce_lot: true
+
+strategy:
+  name: MACrossover
+  params:
+    fast: 10
+    slow: 30
+
+portfolio:
+  mode: single              # single / portfolio
+  allocation: equal         # equal / market_cap / custom
+  # weights: {AAPL: 0.5, MSFT: 0.5}  # custom 时必填
+  rebalance:
+    period: none            # none / daily / weekly / monthly / quarterly / yearly
+    threshold: 0.0          # 权重偏离阈值触发调仓(0 = 不用)
+    min_hold_days: 0
+
+risk:
+  max_single_weight: 1.0
+  max_total_position: 1.0
+  # max_sector_weight: 0.4   # 行业集中度(需 sector_map)
+  # sector_map: {AAPL: tech}
+
+output:
+  dir: "./results"
+  export: ["csv", "excel"]
+  report: none              # html / none(Phase 2)
+  rolling_window: 63
+
+risk_free_rate: 0.0         # 年化无风险利率(小数,如 0.02)

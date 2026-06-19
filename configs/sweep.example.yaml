@@ -1,0 +1,49 @@
+# Djinn 参数扫描示例 — 在均线 fast×slow 网格上搜索最优夏普
+# 用法:djinn sweep -c configs/sweep.example.yaml --grid '{"fast":[5,10,20],"slow":[20,30,60]}'
+
+universe:
+  symbols: ["AAPL"]
+  benchmark: "^GSPC"
+  market: US
+
+period:
+  start: "2020-01-01"
+  end: "2024-12-31"
+
+account:
+  initial_cash: 100000
+  currency: USD
+
+adjust: backward
+
+costs:
+  commission:
+    type: us
+  slippage:
+    type: fixed_bps
+    bps: 5
+  enforce_price_limit: true
+  enforce_suspension: true
+  enforce_lot: true
+
+strategy:
+  name: MACrossover
+  params: {}    # 参数由 --grid 覆盖
+
+portfolio:
+  mode: single
+  allocation: equal
+  rebalance:
+    period: none
+    threshold: 0.0
+
+risk:
+  max_single_weight: 1.0
+  max_total_position: 1.0
+
+output:
+  dir: "./results/sweep"
+  export: ["csv"]
+  report: none
+
+risk_free_rate: 0.02
