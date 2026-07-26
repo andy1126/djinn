@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 from typing import Final
 
 # 规范化 OHLCV 列名(所有 provider 输出统一使用这些列)。
@@ -46,7 +46,7 @@ ALL_COLUMNS: Final[tuple[str, ...]] = (
 )
 
 
-class Market(str, Enum):
+class Market(StrEnum):
     """市场标识。"""
 
     CN = "CN"  # A 股
@@ -77,7 +77,7 @@ class Market(str, Enum):
         return None  # 港股 / 美股无涨跌停(港股有冷静期但回测不建模)
 
 
-class Adjust(str, Enum):
+class Adjust(StrEnum):
     """复权方式。"""
 
     NONE = "none"  # 不复权(raw_close)

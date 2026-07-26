@@ -195,4 +195,8 @@ def run_backtest(
     files: list[Path] = []
     if cfg.output.export:
         files = export(report, out_dir, cfg.output.export)
+    if cfg.output.report == "html":
+        from djinn.viz import save_html_report
+
+        files.append(save_html_report(report, out_dir / "report.html"))
     return RunResult(report=report, config=cfg, exported_files=files)

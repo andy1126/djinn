@@ -75,7 +75,7 @@ def test_config_yaml_roundtrip(tmp_path: Path):
 def test_load_example_yaml():
     """示例配置可加载。"""
     cfg = load_config("configs/backtest.example.yaml")
-    assert cfg.universe.symbols == ["AAPL"]
+    assert cfg.universe.symbols == ["NVDA"]
     assert cfg.strategy.name == "MACrossover"
 
 

@@ -123,6 +123,9 @@ def load_config(
     else:
         raw = dict(data)
     raw = _apply_env_overrides(raw)
+    # 过滤顶层非法字段(如 log 来自 djinn 通用环境变量)
+    known_field_names = set(BacktestConfig.model_fields.keys())
+    raw = {k: v for k, v in raw.items() if k in known_field_names}
     try:
         return BacktestConfig.model_validate(raw)
     except Exception as e:
