@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Djinn 回测报告</title>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           margin: 0; padding: 24px; background: #f5f6f8; color: #1f2933; }
+    h1 { color: #1a365d; border-bottom: 3px solid #3182ce; padding-bottom: 8px; }
+    h2 { color: #2d3748; margin-top: 32px; border-left: 4px solid #3182ce; padding-left: 10px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 16px 0; }
+    .card { background: #fff; border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .card .label { font-size: 12px; color: #718096; }
+    .card .value { font-size: 20px; font-weight: 600; color: #1a365d; margin-top: 4px; }
+    .card .value.pos { color: #2f855a; }
+    .card .value.neg { color: #c53030; }
+    table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13px; }
+    table th, table td { padding: 6px 10px; border-bottom: 1px solid #edf2f7; text-align: left; }
+    table th { background: #edf2f7; }
+    .trades tr:nth-child(even) { background: #f7fafc; }
+    .fig { background: #fff; border-radius: 8px; padding: 12px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .meta { color: #718096; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Djinn 回测报告</h1>
+  <p class="meta">标的: {{ symbols | join(", ") }} | 交易日数: {{ metrics.n_days }} | 成交: {{ metrics.n_trades }} 笔 | 拒单: {{ rejections_count }}</p>
+
+  <h2>核心指标</h2>
+  <div class="cards">
+    {% set _tr = metrics.total_return %}
+    <div class="card"><div class="label">累计收益</div><div class="value {{ 'pos' if _tr > 0 else 'neg' }}">{{ (_tr*100)|round(2) }}%</div></div>
+    {% set _ar = metrics.annual_return %}
+    <div class="card"><div class="label">年化收益</div><div class="value {{ 'pos' if _ar > 0 else 'neg' }}">{{ (_ar*100)|round(2) }}%</div></div>
+    <div class="card"><div class="label">年化波动</div><div class="value">{{ (metrics.annual_volatility*100)|round(2) }}%</div></div>
+    <div class="card"><div class="label">夏普比率</div><div class="value">{{ metrics.sharpe|round(3) }}</div></div>
+    <div class="card"><div class="label">索提诺</div><div class="value">{{ metrics.sortino|round(3) }}</div></div>
+    {% set _mdd = metrics.max_drawdown %}
+    <div class="card"><div class="label">最大回撤</div><div class="value neg">{{ (_mdd*100)|round(2) }}%</div></div>
+    <div class="card"><div class="label">Calmar</div><div class="value">{{ metrics.calmar|round(3) }}</div></div>
+    <div class="card"><div class="label">换手率</div><div class="value">{{ metrics.turnover|round(2) }}</div></div>
+  </div>
+  {% if report.benchmark_stats %}
+  <h2>基准对比</h2>
+  <div class="cards">
+    {% set _b = report.benchmark_stats %}
+    <div class="card"><div class="label">基准收益</div><div class="value">{{ (_b.benchmark_return*100)|round(2) }}%</div></div>
+    {% set _er = _b.excess_return %}
+    <div class="card"><div class="label">超额收益</div><div class="value {{ 'pos' if _er > 0 else 'neg' }}">{{ (_er*100)|round(2) }}%</div></div>
+    <div class="card"><div class="label">Beta</div><div class="value">{{ _b.beta|round(3) }}</div></div>
+    <div class="card"><div class="label">跟踪误差</div><div class="value">{{ (_b.tracking_error*100)|round(2) }}%</div></div>
+    <div class="card"><div class="label">信息比率</div><div class="value">{{ _b.information_ratio|round(3) }}</div></div>
+    <div class="card"><div class="label">相关性</div><div class="value">{{ _b.correlation|round(3) }}</div></div>
+  </div>
+  {% endif %}
+
+  <h2>净值曲线</h2>
+  <div class="fig">{{ equity_fig | safe }}</div>
+
+  <h2>回撤曲线</h2>
+  <div class="fig">{{ drawdown_fig | safe }}</div>
+
+  <h2>仓位权重</h2>
+  <div class="fig">{{ positions_fig | safe }}</div>
+
+  <h2>月度收益热力图</h2>
+  <div class="fig">{{ heatmap_fig | safe }}</div>
+
+  <h2>成交明细(共 {{ metrics.n_trades }} 笔)</h2>
+  {{ trades_html | safe }}
+
+  <p class="meta" style="margin-top:32px">由 Djinn 回测框架生成</p>
+</body>
+</html>
