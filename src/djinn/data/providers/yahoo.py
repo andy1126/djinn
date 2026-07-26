@@ -2,6 +2,9 @@
 
 通过 ``yfinance`` 拉取日线,统一规范化列名,应用复权与日历对齐。
 内置 Parquet + 内存缓存,命中完整区间时直接返回。
+
+yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
+故 :meth:`_fetch` 内置指数退避重试(见 CLAUDE.md "yfinance 易发网络抖动")。
 """
 
 from __future__ import annotations
@@ -58,9 +61,11 @@ class YahooProvider(DataProvider):
         self,
         cache: DataCache | None = None,
         rate_limit_sec: float = 0.0,
+        max_retries: int = 3,
     ) -> None:
         self.cache = cache or DataCache()
         self.rate_limit_sec = rate_limit_sec
+        self.max_retries = max(1, max_retries)
         self._last_request = 0.0
 
     def supports(self, symbol: str, market: Market | None = None) -> bool:
@@ -110,16 +115,49 @@ class YahooProvider(DataProvider):
                 time.sleep(self.rate_limit_sec - elapsed)
             self._last_request = time.monotonic()
         _log.info("yfinance 拉取 %s [%s ~ %s]", symbol, start, end)
-        try:
-            ticker = yf.Ticker(symbol)
-            raw = ticker.history(
-                start=start.isoformat(), end=end.isoformat(), auto_adjust=False
-            )
-        except Exception as e:
-            raise ProviderError(f"yfinance 拉取 {symbol} 失败: {e}") from e
-        if raw is None or len(raw) == 0:
-            raise DataError(f"yfinance 返回空: {symbol}")
-        return self._normalize(raw)
+        # yfinance 易发网络抖动 / 偶发空返回;指数退避重试。
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries):
+            try:
+                ticker = yf.Ticker(symbol)
+                raw = ticker.history(
+                    start=start.isoformat(), end=end.isoformat(), auto_adjust=False
+                )
+            except Exception as e:  # yfinance 抛各种网络/解析错误
+                last_exc = e
+                _log.warning(
+                    "yfinance 拉取 %s 第 %d/%d 次异常: %s",
+                    symbol,
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
+                self._sleep_backoff(attempt)
+                continue
+            if raw is None or len(raw) == 0:
+                # 空返回在 yfinance 抖动里很常见;也可能是真无数据。
+                # 重试覆盖抖动,真无数据时重试也是空,代价小。
+                _log.warning(
+                    "yfinance 拉取 %s 第 %d/%d 次返回空",
+                    symbol,
+                    attempt + 1,
+                    self.max_retries,
+                )
+                last_exc = DataError(f"yfinance 返回空: {symbol}")
+                self._sleep_backoff(attempt)
+                continue
+            return self._normalize(raw)
+        # 重试用尽:若是网络异常,抛 ProviderError;若是空返回,抛 DataError。
+        if isinstance(last_exc, DataError):
+            raise last_exc
+        raise ProviderError(
+            f"yfinance 拉取 {symbol} 失败(重试 {self.max_retries} 次): {last_exc}"
+        ) from last_exc
+
+    def _sleep_backoff(self, attempt: int) -> None:
+        """指数退避:0.5s, 1.5s, ... 抖动后给 yfinance 喘息窗口。"""
+        delay = 0.5 * (3**attempt)
+        time.sleep(delay)
 
     def _normalize(self, raw: pd.DataFrame) -> pd.DataFrame:
         df = raw.rename(columns=_YF_MAP).copy()

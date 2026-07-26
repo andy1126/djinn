@@ -4,13 +4,13 @@ import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Progres
 import dayjs from 'dayjs'
 import { createBacktest, subscribeProgress } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
-import type { JobStatus } from '@/types'
+import type { BacktestConfig, JobStatus } from '@/types'
 
 const { RangePicker } = DatePicker
 
 export default function BacktestRunPage() {
   const navigate = useNavigate()
-  const { config, updateConfig } = useConfigStore()
+  const { config, setConfig } = useConfigStore()
   const [form] = Form.useForm()
   const [jobId, setJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<JobStatus | null>(null)
@@ -27,22 +27,27 @@ export default function BacktestRunPage() {
     })
   }, [])
 
-  const syncConfig = (v: any) => {
+  const syncConfig = (v: any): BacktestConfig => {
     const [start, end] = v.range || []
-    updateConfig('universe', {
-      symbols: v.symbols.split(',').map((s: string) => s.trim()).filter(Boolean),
-      benchmark: config.universe.benchmark,
-      market: v.market,
-    })
-    updateConfig('period', { start: start.format('YYYY-MM-DD'), end: end.format('YYYY-MM-DD') })
-    updateConfig('account', { initial_cash: v.initialCash, currency: v.currency })
-    updateConfig('adjust', v.adjust)
+    const next = {
+      ...config,
+      universe: {
+        ...config.universe,
+        symbols: v.symbols.split(',').map((s: string) => s.trim()).filter(Boolean),
+        market: v.market,
+      },
+      period: { start: start.format('YYYY-MM-DD'), end: end.format('YYYY-MM-DD') },
+      account: { ...config.account, initial_cash: v.initialCash, currency: v.currency },
+      adjust: v.adjust,
+    } as BacktestConfig
+    setConfig(next)
+    return next
   }
 
   const onSubmit = async (v: any) => {
-    syncConfig(v)
+    const cfg = syncConfig(v)
     try {
-      const resp = await createBacktest({ config })
+      const resp = await createBacktest({ config: cfg })
       setJobId(resp.job_id)
       setProgress({ job_id: resp.job_id, title: '', status: 'pending', progress: 0, stage: '排队中', error: null, result_path: null })
       // 订阅 WebSocket 进度
