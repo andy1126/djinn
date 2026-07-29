@@ -1,7 +1,10 @@
-"""行情缓存:Parquet 落盘 + 内存 LRU。
+"""两级缓存:内存 LRU + 磁盘 Parquet。
 
-缓存键 ``(provider, symbol, adjust, freq)``;命中范围不足时由 provider 增量
-拉取并合并。命中校验以 [start, end] 完全覆盖为准。
+缓存键 ``{provider}::{dtype}::{symbol_or_index}::{adjust}``:
+
+- ``dtype`` 区分数据类型:``quote``(行情)/ ``fundamental``(基本面)/ ``universe``(股票池);
+- 行情按 ``(provider, symbol, adjust)`` 命中,范围不足时由 provider 增量拉取并合并;
+- 基本面 / 股票池不做区间合并,整帧覆盖写入(快照 / 低频数据)。
 """
 
 from __future__ import annotations
@@ -39,31 +42,45 @@ class DataCache:
 
     # ── 键 ──────────────────────────────────────────────
     @staticmethod
-    def make_key(provider: str, symbol: str, adjust: Adjust) -> str:
-        return f"{provider}::{symbol}::{adjust.value}"
+    def make_key(
+        provider: str,
+        symbol: str,
+        adjust: Adjust = Adjust.NONE,
+        dtype: str = "quote",
+    ) -> str:
+        """构造缓存键 ``{provider}::{dtype}::{symbol}::{adjust}``。
+
+        行情(dtype=quote)需带 ``adjust``;基本面 / 股票池(dtype=fundamental/universe)
+        与复权无关,统一用 ``Adjust.NONE`` 占位。
+        """
+        return f"{provider}::{dtype}::{symbol}::{adjust.value}"
 
     def _parquet_path(self, key: str) -> Path:
         safe = key.replace("/", "_").replace("\\", "_")
         return self.cache_dir / f"{safe}.parquet"
 
     # ── 读 ──────────────────────────────────────────────
+    def _read_parquet(self, key: str, *, datetime_index: bool) -> pd.DataFrame | None:
+        path = self._parquet_path(key)
+        if not path.exists():
+            return None
+        try:
+            df = pd.read_parquet(path)
+            if datetime_index:
+                df.index = pd.to_datetime(df.index)
+            self._put_mem(key, df)
+            return df
+        except Exception as e:
+            _log.warning("缓存读取失败 %s: %s", path, e)
+            return None
+
     def get(self, provider: str, symbol: str, adjust: Adjust) -> pd.DataFrame | None:
-        """返回完整缓存(不按区间截断);无则 None。"""
-        key = self.make_key(provider, symbol, adjust)
+        """返回完整行情缓存(不按区间截断);无则 None。"""
+        key = self.make_key(provider, symbol, adjust, dtype="quote")
         if key in self._mem:
             self._mem.move_to_end(key)
             return self._mem[key]
-        path = self._parquet_path(key)
-        if path.exists():
-            try:
-                df = pd.read_parquet(path)
-                df.index = pd.to_datetime(df.index)
-                self._put_mem(key, df)
-                return df
-            except Exception as e:
-                _log.warning("缓存读取失败 %s: %s", path, e)
-                return None
-        return None
+        return self._read_parquet(key, datetime_index=True)
 
     def _put_mem(self, key: str, df: pd.DataFrame) -> None:
         self._mem[key] = df
@@ -71,15 +88,39 @@ class DataCache:
         while len(self._mem) > self._mem_size:
             self._mem.popitem(last=False)
 
-    # ── 写 ──────────────────────────────────────────────
-    def put(self, provider: str, symbol: str, adjust: Adjust, df: pd.DataFrame) -> None:
-        key = self.make_key(provider, symbol, adjust)
+    def _write(self, key: str, df: pd.DataFrame) -> None:
         self._put_mem(key, df)
         path = self._parquet_path(key)
         try:
             df.to_parquet(path)
         except Exception as e:
             _log.warning("缓存写入失败 %s: %s", path, e)
+
+    # ── 写 ──────────────────────────────────────────────
+    def put(self, provider: str, symbol: str, adjust: Adjust, df: pd.DataFrame) -> None:
+        key = self.make_key(provider, symbol, adjust, dtype="quote")
+        self._write(key, df)
+
+    # ── 基本面 / 股票池(整帧,不做区间合并)──────────────
+    def put_fundamentals(self, provider: str, symbol: str, df: pd.DataFrame) -> None:
+        self._write(self.make_key(provider, symbol, dtype="fundamental"), df)
+
+    def get_fundamentals(self, provider: str, symbol: str) -> pd.DataFrame | None:
+        key = self.make_key(provider, symbol, dtype="fundamental")
+        if key in self._mem:
+            self._mem.move_to_end(key)
+            return self._mem[key]
+        return self._read_parquet(key, datetime_index=False)
+
+    def put_universe(self, provider: str, name: str, df: pd.DataFrame) -> None:
+        self._write(self.make_key(provider, name, dtype="universe"), df)
+
+    def get_universe(self, provider: str, name: str) -> pd.DataFrame | None:
+        key = self.make_key(provider, name, dtype="universe")
+        if key in self._mem:
+            self._mem.move_to_end(key)
+            return self._mem[key]
+        return self._read_parquet(key, datetime_index=False)
 
     # ── 合并 ────────────────────────────────────────────
     def merge(

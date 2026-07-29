@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import date
 
+import pandas as pd
+
 from djinn.data.market_data import MarketData
 from djinn.data.schema import Adjust, Market
 from djinn.utils.exceptions import SymbolNotFoundError
@@ -50,6 +52,42 @@ class DataProvider(ABC):
     ) -> MarketData:
         """获取基准行情(默认等同于普通标的,子类可覆写以使用专属接口)。"""
         return self.get_ohlcv(symbol, start, end, adjust)
+
+    # ── 可选扩展(股票池 / 行业 / 基本面)────────────────────
+    # 以下均为非抽象:provider 按需覆写,默认抛 NotImplementedError。
+    # 横截面 alpha 层(factor / screen)依赖这些接口;仅做行情回测可不实现。
+
+    def get_stock_list(self, market: Market | None = None) -> pd.DataFrame:
+        """全市场股票列表。
+
+        Returns:
+            index=symbol,columns 至少含 ``name``、``market``。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_stock_list")
+
+    def get_index_components(self, index: str) -> list[str]:
+        """指数成分股代码列表(djinn 标准后缀形式,如 ``000300.SH``)。"""
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_index_components")
+
+    def get_industry_map(self, symbols: list[str]) -> dict[str, str]:
+        """symbol → 行业名映射(缺失的 symbol 不在返回里)。"""
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_industry_map")
+
+    def get_fundamentals(self, symbols: list[str], when: date) -> pd.DataFrame:
+        """``when`` 当日截面基本面快照(point-in-time)。
+
+        Returns:
+            index=symbol,columns=规范化基本面字段(见 :mod:`djinn.data.schema`)。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_fundamentals")
+
+    def get_fundamentals_history(
+        self, symbol: str, start: date, end: date
+    ) -> pd.DataFrame:
+        """单标的财报时序(含 ``announce_date``/``report_date``),供成长/质量回看。"""
+        raise NotImplementedError(
+            f"{type(self).__name__} 不支持 get_fundamentals_history"
+        )
 
 
 class ProviderRegistry:

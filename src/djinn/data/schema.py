@@ -24,6 +24,37 @@ COL_DIVIDEND: Final[str] = "dividend"  # 每股分红(现金,未复权口径)
 COL_SPLIT_RATIO: Final[str] = "split_ratio"  # 拆股比例(1:N 记为 N)
 COL_IS_SUSPENDED: Final[str] = "is_suspended"  # 停牌标记
 
+# ── 基本面 / 行业规范化列(供 factor / screen 层统一引用)─────────
+COL_MARKET_CAP: Final[str] = "market_cap"  # 总市值
+COL_FLOAT_CAP: Final[str] = "float_cap"  # 流通市值
+COL_PE: Final[str] = "pe"  # 市盈率
+COL_PB: Final[str] = "pb"  # 市净率
+COL_PS: Final[str] = "ps"  # 市销率
+COL_ROE: Final[str] = "roe"  # 净资产收益率
+COL_GROSS_MARGIN: Final[str] = "gross_margin"  # 毛利率
+COL_REVENUE: Final[str] = "revenue"  # 营业收入
+COL_NET_PROFIT: Final[str] = "net_profit"  # 净利润
+COL_REVENUE_YOY: Final[str] = "revenue_yoy"  # 营收同比
+COL_PROFIT_YOY: Final[str] = "profit_yoy"  # 净利同比
+COL_INDUSTRY: Final[str] = "industry"  # 所属行业
+COL_REPORT_DATE: Final[str] = "report_date"  # 报告期(财报所属期)
+COL_ANNOUNCE_DATE: Final[str] = "announce_date"  # 公告日(point-in-time 关键)
+
+# 数值型基本面字段(截面 / 时序面板的核心列)。
+FUNDAMENTAL_VALUE_COLUMNS: Final[tuple[str, ...]] = (
+    COL_MARKET_CAP,
+    COL_FLOAT_CAP,
+    COL_PE,
+    COL_PB,
+    COL_PS,
+    COL_ROE,
+    COL_GROSS_MARGIN,
+    COL_REVENUE,
+    COL_NET_PROFIT,
+    COL_REVENUE_YOY,
+    COL_PROFIT_YOY,
+)
+
 OHLCV_COLUMNS: Final[tuple[str, ...]] = (
     COL_OPEN,
     COL_HIGH,

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -48,6 +48,10 @@ class EngineConfig:
     fill_ref: str = "open"  # "open" / "close" / "vwap"
     # 是否在第一个交易日按分配建立初始仓位
     initial_alloc_on_start: bool = False
+    # 交易日对齐方式:intersection(交集,默认)/ union(并集,选股回测用)
+    calendar: Literal["intersection", "union"] = "intersection"
+    # 基准标的(union 模式下以其交易日历为主日历时提供)
+    benchmark_symbol: str | None = None
 
     def resolve(
         self, default_market: Market
@@ -118,8 +122,8 @@ class EventDrivenEngine:
             account=account, commission=comm, slippage=slip, constraints=con
         )
 
-        # 对齐所有标的的交易日索引(取并集后按市场日历对齐,这里取交集保证都有行情)
-        trading_index = self._aligned_index(data)
+        # 对齐所有标的的交易日索引(intersection 取交集;union 取并集/以基准日历为主)
+        trading_index = self._aligned_index(data, benchmark)
 
         # 每标的的 prev_close 缓存(涨跌停需要昨收)
         prev_close: dict[str, float] = {}
@@ -140,6 +144,11 @@ class EventDrivenEngine:
             ts_date = ts.date()
             bars = self._bars_at(data, ts)
             prices = {s: b.close for s, b in bars.items() if b is not None}
+            # 前向填充估值价:当日无行情的持仓标的用最近可得价(prev_close)估值,
+            # 否则持仓市值会归零、破坏 Account 资金守恒不变式(union 日历下尤其重要)。
+            prices_mtm = dict(prices)
+            for s, pc in prev_close.items():
+                prices_mtm.setdefault(s, pc)
 
             # 1. MARKET_OPEN:解冻 T+1
             if con.enforce_t_plus_1:
@@ -147,7 +156,7 @@ class EventDrivenEngine:
 
             # 2. PRICE:撮合昨日 pending 订单(用今日开盘 bar)
             if pending_orders:
-                equity_now = account.equity_float(prices)
+                equity_now = account.equity_float(prices_mtm)
                 still_pending: list[Order] = []
                 for order in pending_orders:
                     bar = bars.get(order.symbol)
@@ -164,7 +173,7 @@ class EventDrivenEngine:
 
             # 3. SIGNAL:策略生成今日订单(进 pending,明日撮合)
             data_view = DataView(data, ts_date)
-            portfolio_view = PortfolioView(account, prices, ts_date)
+            portfolio_view = PortfolioView(account, prices_mtm, ts_date)
             ctx = Context(now=ts_date, data=data_view, portfolio=portfolio_view)
             try:
                 strategy.on_bar(ctx)
@@ -177,7 +186,7 @@ class EventDrivenEngine:
             if rebalancer is not None and i > 0:
                 cur_weights = portfolio_view.weights()
                 rb_orders_intents = rebalancer.maybe_rebalance(
-                    ts_date, symbols, allocation, cur_weights, prices=prices
+                    ts_date, symbols, allocation, cur_weights, prices=prices_mtm
                 )
                 new_orders.extend(rb_orders_intents)
 
@@ -191,7 +200,7 @@ class EventDrivenEngine:
             pending_orders.extend(new_engine_orders)
 
             # 6. MARKET_CLOSE:mark to market + 记录
-            equity = account.mark_to_market(ts_date, prices)
+            equity = account.mark_to_market(ts_date, prices_mtm)
             equity_hist.append(to_float(equity))
             cash_hist.append(to_float(account.cash))
             pos_snapshot: dict[str, float] = {}
@@ -243,8 +252,32 @@ class EventDrivenEngine:
         # 多市场混合:取第一个,约束按其配置(跨市场为 Phase 2)
         return data[symbols[0]].market
 
-    def _aligned_index(self, data: dict[str, MarketData]) -> pd.DatetimeIndex:
-        """取所有标的交易日的交集(保证每个 ts 都有全部标的的 bar)。"""
+    def _aligned_index(
+        self,
+        data: dict[str, MarketData],
+        benchmark: MarketData | None = None,
+    ) -> pd.DatetimeIndex:
+        """对齐各标的交易日索引。
+
+        - ``intersection``(默认):所有标的交易日交集,保证每个 ts 都有全部标的的 bar。
+        - ``union``(选股回测):交易日并集;若提供基准(或 ``benchmark_symbol`` 命中
+          data)则以其交易日历为主日历(基准多为指数,交易日最全)。缺失 bar 的持仓
+          由主循环前向填充估值。
+        """
+        if self.config.calendar == "union":
+            if benchmark is not None:
+                return pd.DatetimeIndex(benchmark.df.index).sort_values()
+            bm_sym = self.config.benchmark_symbol
+            if bm_sym is not None and bm_sym in data:
+                return pd.DatetimeIndex(data[bm_sym].df.index).sort_values()
+            idx_u: pd.DatetimeIndex | None = None
+            for md in data.values():
+                other = pd.DatetimeIndex(md.df.index)
+                idx_u = other if idx_u is None else idx_u.union(other)
+            if idx_u is None or len(idx_u) == 0:
+                raise ValueError("标的交易日为空,无法对齐")
+            return pd.DatetimeIndex(idx_u.sort_values())
+
         idx: pd.DatetimeIndex | None = None
         for md in data.values():
             other = pd.DatetimeIndex(md.df.index)

@@ -27,7 +27,11 @@ from djinn.data.schema import (
     COL_HIGH,
     COL_IS_SUSPENDED,
     COL_LOW,
+    COL_MARKET_CAP,
     COL_OPEN,
+    COL_PB,
+    COL_PE,
+    COL_PS,
     COL_RAW_CLOSE,
     COL_SPLIT_RATIO,
     COL_VOLUME,
@@ -201,3 +205,56 @@ class YahooProvider(DataProvider):
             )
         ]
         return df[keep]
+
+    # ── 基本面(美/港兜底,Phase 0 扩展)─────────────────────
+    def get_fundamentals(self, symbols: list[str], when: date) -> pd.DataFrame:
+        """截面估值快照(``Ticker.info``,实时口径,美/港兜底)。
+
+        仅含 market_cap / pe / pb / ps 等 valuation 字段;``when`` 仅作记录
+        (info 为最新值,非历史 PIT)。网络抖动时按单标的降级,不整体失败。
+        """
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        rows: dict[str, dict[str, float]] = {}
+        for sym in symbols:
+            cache_symbol = f"info_{sym}"
+            cached = self.cache.get_fundamentals(self.name, cache_symbol)
+            if cached is not None and len(cached):
+                rows[sym] = {c: float(cached.iloc[0][c]) for c in cached.columns}
+                continue
+            self._throttle()
+            try:
+                info = yf.Ticker(sym).info or {}
+            except Exception as e:
+                _log.warning("yfinance %s info 拉取失败,跳过: %s", sym, e)
+                continue
+            row = {
+                COL_MARKET_CAP: _fnum(info.get("marketCap")),
+                COL_PE: _fnum(info.get("trailingPE")),
+                COL_PB: _fnum(info.get("priceToBook")),
+                COL_PS: _fnum(info.get("priceToSalesTrailing12Months")),
+            }
+            self.cache.put_fundamentals(self.name, cache_symbol, pd.DataFrame([row]))
+            rows[sym] = row
+        if not rows:
+            raise DataError(f"yfinance 基本面快照为空: {symbols}")
+        return pd.DataFrame.from_dict(rows, orient="index")
+
+    def _throttle(self) -> None:
+        if self.rate_limit_sec > 0:
+            elapsed = time.monotonic() - self._last_request
+            if elapsed < self.rate_limit_sec:
+                time.sleep(self.rate_limit_sec - elapsed)
+            self._last_request = time.monotonic()
+
+
+def _fnum(v: object) -> float:
+    """yfinance info 数值字段 → float(None / 非法 → nan)。"""
+    try:
+        if v is None:
+            return float("nan")
+        return float(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("nan")

@@ -11,17 +11,41 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from djinn.data.schema import Adjust, Market
+from djinn.screen.screener import ScreenCondition
 
 
 class UniverseConfig(BaseModel):
-    """标的池与基准。"""
+    """标的池与基准。
+
+    标的来源(可叠加,解析后合并去重):
+    - ``symbols``:显式标的列表;
+    - ``index``:指数代码 / 名,取其成分股入池;
+    - ``screen``:截面筛选条件,作用于上述候选池。
+
+    ``factors`` + ``n_stocks`` 声明动态打分池(供选股策略 / API 解析,默认 None)。
+    """
 
     model_config = ConfigDict(extra="forbid")
-    symbols: list[str] = Field(..., min_length=1, description="标的代码列表")
+    symbols: list[str] = Field(default_factory=list, description="标的代码列表")
     benchmark: str | None = Field(
         default=None, description="基准代码(如 ^GSPC / 000300.SH)"
     )
     market: Market | None = Field(default=None, description="强制市场;None 自动推断")
+    # Phase 3:动态股票池来源(均向后兼容,默认 None)
+    index: str | None = Field(default=None, description="指数代码/名,取成分股入池")
+    screen: list[ScreenCondition] | None = Field(
+        default=None, description="截面筛选条件列表(作用于候选池)"
+    )
+    factors: dict[str, float] | None = Field(
+        default=None, description="动态打分池:因子名 → 权重"
+    )
+    n_stocks: int | None = Field(default=None, gt=0, description="动态池大小(TopN)")
+
+    @model_validator(mode="after")
+    def _check_source(self) -> UniverseConfig:
+        if not (self.symbols or self.index or self.screen):
+            raise ValueError("universe 需至少提供 symbols / index / screen 之一")
+        return self
 
 
 class PeriodConfig(BaseModel):
@@ -73,6 +97,17 @@ class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., description="策略类名(如 MACrossover)")
     params: dict[str, int | float | str | bool | None] = Field(default_factory=dict)
+    # Phase 3:因子组合策略(scope=portfolio,均向后兼容默认 None)
+    scope: Literal["per_symbol", "portfolio"] | None = Field(
+        default=None, description="策略作用域;portfolio 为整体调仓(选股)"
+    )
+    factor_weights: dict[str, float] | None = Field(
+        default=None, description="因子名 → 权重(负值 = 因子值越低越好)"
+    )
+    n_stocks: int | None = Field(default=None, gt=0, description="选股数(TopN)")
+    rebalance_freq: int | None = Field(
+        default=None, gt=0, description="调仓间隔(交易日)"
+    )
 
 
 class RebalanceConfigModel(BaseModel):
@@ -87,7 +122,16 @@ class RebalanceConfigModel(BaseModel):
 class PortfolioConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["single", "portfolio"] = "single"
-    allocation: Literal["equal", "market_cap", "custom"] = "equal"
+    # 与 djinn.portfolio.allocation.AllocationType 保持一致(内联以免 config 重量级依赖)
+    allocation: Literal[
+        "equal",
+        "market_cap",
+        "custom",
+        "score",
+        "risk_parity",
+        "min_variance",
+        "mean_variance",
+    ] = "equal"
     weights: dict[str, float] | None = None
     rebalance: RebalanceConfigModel = Field(default_factory=RebalanceConfigModel)
 
@@ -98,6 +142,7 @@ class RiskConfig(BaseModel):
     max_total_position: float = Field(default=1.0, ge=0, le=1)
     max_sector_weight: float | None = None
     sector_map: dict[str, str] | None = None
+    max_turnover: float | None = Field(default=None, ge=0)
 
 
 class OutputConfig(BaseModel):
@@ -131,12 +176,15 @@ class BacktestConfig(BaseModel):
         return Adjust(str(v))
 
     def resolved_market(self) -> Market:
-        """确定回测市场(universe.market 或由首个标的推断)。"""
+        """确定回测市场(universe.market,或由标的 / 指数推断)。"""
         if self.universe.market is not None:
             return self.universe.market
         from djinn.data.schema import detect_market
 
-        return detect_market(self.universe.symbols[0])
+        if self.universe.symbols:
+            return detect_market(self.universe.symbols[0])
+        # 无显式标的(纯 index / screen 池):默认 A 股(akshare 免费主线)
+        return Market.CN
 
     def resolved_t_plus_1(self) -> bool:
         if self.account.t_plus_1 is not None:

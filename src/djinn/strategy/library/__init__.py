@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from djinn.strategy.base import Strategy
 from djinn.strategy.library.dca import DCA
+from djinn.strategy.library.factor_portfolio import FactorPortfolioStrategy
 from djinn.strategy.library.ma_crossover import MACrossover
 from djinn.strategy.library.momentum import Momentum
 from djinn.strategy.library.rsi_reversal import RSIReversal, rsi
@@ -14,6 +15,7 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "RSIReversal": RSIReversal,
     "Momentum": Momentum,
     "DCA": DCA,
+    "FactorPortfolio": FactorPortfolioStrategy,
 }
 
 
@@ -27,6 +29,7 @@ def get_strategy_class(name: str) -> type[Strategy]:
 __all__ = [
     "DCA",
     "STRATEGY_REGISTRY",
+    "FactorPortfolioStrategy",
     "MACrossover",
     "Momentum",
     "RSIReversal",
