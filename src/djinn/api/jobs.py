@@ -7,16 +7,18 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from djinn.data.provider import ProviderRegistry
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -254,6 +256,7 @@ def run_backtest_job(
     registry: JobRegistry,
     job_id: str,
     csv_dir: str | None = None,
+    provider_registry: ProviderRegistry | None = None,
 ) -> None:
     """在后台线程执行回测任务(更新 job 状态与结果)。"""
     from djinn.cli.runner import run_backtest
@@ -267,11 +270,21 @@ def run_backtest_job(
         registry.update(job_id, status="running", progress=0.1, stage="加载配置")
         cfg = load_config(data=config_dict)
         registry.update(job_id, progress=0.2, stage="拉取数据")
-        result = run_backtest(cfg, csv_dir=csv_dir)
+        # Web 报告 / 导出端点从 report_store 读缓存,故后台任务一次性算好归因落盘,
+        # 避免读端点重跑回测(参见 api/report_store.py)。
+        result = run_backtest(
+            cfg,
+            csv_dir=csv_dir,
+            registry=provider_registry,
+            with_attribution=True,
+        )
         registry.update(job_id, progress=0.8, stage="生成报告")
         report = result.report
-        # 结果摘要(完整曲线通过单独端点按需取)
         summary = report.summary()
+        # 落盘完整序列化报告(含归因)供 /report 与 /export 读端点复用
+        from djinn.api.report_store import save, serialize_report
+
+        save(job_id, serialize_report(report))
         registry.update(
             job_id,
             status="done",
@@ -288,6 +301,7 @@ def run_sweep_job(
     registry: JobRegistry,
     job_id: str,
     csv_dir: str | None = None,
+    provider_registry: ProviderRegistry | None = None,
 ) -> None:
     """在后台线程执行参数扫描。"""
     from djinn.cli.sweep import _run_one
@@ -305,17 +319,24 @@ def run_sweep_job(
     try:
         registry.update(job_id, status="running", progress=0.1, stage="加载配置")
         cfg = load_config(data=config_dict)
-        cache = DataCache()
-        registry_obj = default_registry(csv_dir=csv_dir, cache=cache)
+        # 注入的 provider_registry 优先(测试 / API 复用单例缓存);否则自建。
+        if provider_registry is not None:
+            registry_obj = provider_registry
+        else:
+            registry_obj = default_registry(csv_dir=csv_dir, cache=DataCache())
         market = cfg.resolved_market()
-        # 预拉取数据
-        for sym in cfg.universe.symbols:
+        # 预拉数据:base symbols ∪ 所有扫到的 universe.index 的成分
+        # (扫 index 时各组合成分股不同,这里统一预拉缓存,_run_one 内按需命中)
+        from djinn.cli.sweep import _expand_grid, _index_symbols
+
+        combos = _expand_grid(grid)
+        all_symbols: set[str] = set(cfg.universe.symbols)
+        for idx in grid.get("universe.index", []) or []:
+            all_symbols.update(_index_symbols(str(idx), registry_obj))
+        for sym in all_symbols:
             registry_obj.get_ohlcv(
                 sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
             )
-        from djinn.cli.sweep import _expand_grid
-
-        combos = _expand_grid(grid)
         n = len(combos) or 1
         results: list[dict[str, Any]] = []
         for i, c in enumerate(combos):
@@ -323,7 +344,11 @@ def run_sweep_job(
             registry.update(
                 job_id, progress=0.1 + 0.85 * (i + 1) / n, stage=f"扫描 {i + 1}/{n}"
             )
-        results.sort(key=lambda r: r.get(target, 0.0), reverse=True)
+        # 排序:max_drawdown 等越小越好的目标需升序(reversed=False)。
+        from djinn.cli.sweep import REVERSE_MIN_TARGETS
+
+        reverse_sort = target not in REVERSE_MIN_TARGETS
+        results.sort(key=lambda r: r.get(target, 0.0) or 0.0, reverse=reverse_sort)
         registry.update(
             job_id,
             status="done",
@@ -333,4 +358,326 @@ def run_sweep_job(
         )
     except Exception as e:
         log.exception("扫描任务 %s 失败", job_id)
+        registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+# ── 横截面 alpha 任务(因子分析 / 选股)────────────────────
+def _json_scalar(v: Any) -> Any:
+    """标量 JSON 友好化:numpy 标量 → python,NaN/Inf → None。"""
+    if v is None or isinstance(v, (str, bool, int)):
+        return v
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return f if math.isfinite(f) else None
+
+
+def _index_components(registry: ProviderRegistry, index: str) -> list[str]:
+    """从首个支持指数成分的 provider 取成分股(全部失败返回 [])。"""
+    for p in registry.providers:
+        try:
+            comps = p.get_index_components(index)
+        except NotImplementedError:
+            continue
+        except Exception as e:
+            _log.warning("provider %s 取指数 %s 成分失败: %s", p.name, index, e)
+            continue
+        if comps:
+            return [str(s) for s in comps]
+    return []
+
+
+def _resolve_universe(meta: dict[str, Any], registry: ProviderRegistry) -> list[str]:
+    """从任务 meta 解析候选标的池:显式 symbols 优先,否则 index 成分。"""
+    symbols = [str(s) for s in (meta.get("symbols") or [])]
+    if not symbols and meta.get("index"):
+        symbols = _index_components(registry, str(meta["index"]))
+    return list(dict.fromkeys(symbols))
+
+
+def _industry_map(registry: ProviderRegistry, symbols: list[str]) -> dict[str, str]:
+    """取 symbol → 行业映射(全部 provider 失败返回 {})。"""
+    for p in registry.providers:
+        try:
+            m = p.get_industry_map(symbols)
+        except NotImplementedError:
+            continue
+        except Exception as e:
+            _log.warning("provider %s 取行业映射失败: %s", p.name, e)
+            continue
+        if m:
+            return {str(k): str(v) for k, v in m.items()}
+    return {}
+
+
+def _build_fundamental_panels(
+    symbols: list[str],
+    prices_index: Any,
+    start: date,
+    end: date,
+    registry: ProviderRegistry,
+    market: Any,
+) -> dict[str, Any]:
+    """组装 point-in-time 基本面宽表(供估值 / 质量 / 成长类因子)。"""
+    import pandas as pd
+
+    from djinn.data.providers.fundamentals_router import FundamentalsRouter
+    from djinn.factor.engine import DEFAULT_FUNDAMENTAL_FIELDS, FactorEngine
+
+    eng = FactorEngine()
+    return eng._fundamental_panels(
+        DEFAULT_FUNDAMENTAL_FIELDS,
+        symbols,
+        pd.DatetimeIndex(prices_index),
+        start,
+        end,
+        FundamentalsRouter(registry.providers),
+        market,
+    )
+
+
+def run_factor_analysis_job(
+    registry: JobRegistry,
+    job_id: str,
+    provider_registry: ProviderRegistry | None = None,
+) -> None:
+    """后台执行单因子分析:universe × 区间 → IC / 分层 / 衰减 / 换手报告。"""
+
+    from djinn.data import default_registry
+    from djinn.data.schema import Adjust, Market
+    from djinn.factor import FactorEngine, make_factor
+    from djinn.factor.analysis import analyze_factor, compute_forward_returns
+
+    job = registry.get(job_id)
+    meta = (job.result or {}).get("__meta__", {}) if job and job.result else {}
+    preg = provider_registry or default_registry()
+    try:
+        registry.update(job_id, status="running", progress=0.05, stage="解析标的池")
+        factor_name = str(meta["factor"])
+        params = meta.get("params") or {}
+        market = Market(meta["market"]) if meta.get("market") else None
+        start = date.fromisoformat(str(meta["start"]))
+        end = date.fromisoformat(str(meta["end"]))
+        adjust = Adjust(str(meta.get("adjust", "backward")))
+        symbols = _resolve_universe(meta, preg)
+        if not symbols:
+            raise ValueError("标的池为空(需提供 symbols 或可解析的 index)")
+        factor = make_factor(factor_name, **params)
+
+        registry.update(job_id, progress=0.2, stage=f"拉取 {len(symbols)} 只行情")
+        eng = FactorEngine()
+        prices, ohlcv = eng._ohlcv_panels(symbols, start, end, preg, market, adjust)
+        registry.update(job_id, progress=0.45, stage="计算因子面板")
+        fundamentals = _build_fundamental_panels(
+            symbols, prices.index, start, end, preg, market
+        )
+        factor_panel = factor.compute(prices, ohlcv, fundamentals)
+
+        registry.update(job_id, progress=0.7, stage="IC / 分层分析")
+        periods = tuple(int(p) for p in (meta.get("periods") or [1, 5, 10]))
+        fwd = compute_forward_returns(prices, periods)
+        report = analyze_factor(
+            factor_panel,
+            fwd,
+            name=factor.name,
+            ic_method=str(meta.get("ic_method", "spearman")),
+            n_quantiles=int(meta.get("n_quantiles", 5)),
+            industry_map=_industry_map(preg, symbols),
+        )
+        registry.update(
+            job_id,
+            status="done",
+            progress=1.0,
+            stage="完成",
+            result={"__meta__": meta, "report": report.to_dict(), "symbols": symbols},
+        )
+    except Exception as e:
+        _log.exception("因子分析任务 %s 失败", job_id)
+        registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+def run_factor_matrix_job(
+    registry: JobRegistry,
+    job_id: str,
+    provider_registry: ProviderRegistry | None = None,
+) -> None:
+    """后台执行多因子诊断:universe × 区间 → 因子相关矩阵 + 各因子 IC 汇总。"""
+    from djinn.data import default_registry
+    from djinn.data.schema import Adjust, Market
+    from djinn.factor import FactorEngine, make_factor
+    from djinn.factor.analysis import analyze_factor_matrix
+
+    job = registry.get(job_id)
+    meta = (job.result or {}).get("__meta__", {}) if job and job.result else {}
+    preg = provider_registry or default_registry()
+    try:
+        registry.update(job_id, status="running", progress=0.05, stage="解析标的池")
+        pts = meta.get("factors") or []
+        market = Market(meta["market"]) if meta.get("market") else None
+        start = date.fromisoformat(str(meta["start"]))
+        end = date.fromisoformat(str(meta["end"]))
+        adjust = Adjust(str(meta.get("adjust", "backward")))
+        symbols = _resolve_universe(meta, preg)
+        if not symbols:
+            raise ValueError("标的池为空(需提供 symbols 或可解析的 index)")
+        if not pts or len(pts) < 2:
+            raise ValueError("多因子诊断需至少 2 个因子")
+
+        registry.update(job_id, progress=0.15, stage=f"拉取 {len(symbols)} 只行情")
+        eng = FactorEngine()
+        prices, ohlcv = eng._ohlcv_panels(symbols, start, end, preg, market, adjust)
+        registry.update(job_id, progress=0.45, stage=f"计算 {len(pts)} 个因子面板")
+        fundamentals = _build_fundamental_panels(
+            symbols, prices.index, start, end, preg, market
+        )
+        panels: dict[str, Any] = {}
+        for pt in pts:
+            name = str(pt["factor"])
+            params = pt.get("params") or {}
+            direction = int(pt.get("direction", 1))
+            f = make_factor(name, **params)
+            panel = f.compute(prices, ohlcv, fundamentals)
+            # direction=-1 → 翻符号(诊断相关用同一口径因子值)
+            if direction < 0:
+                panel = -panel
+            # 同名因子重复入组合:加序号避免字典覆盖
+            key = (
+                name
+                if name not in panels
+                else f"{name}#{sum(1 for k in panels if k.startswith(name))}"
+            )
+            panels[key] = panel
+
+        registry.update(job_id, progress=0.75, stage="相关 / IC 汇总")
+        periods = tuple(int(p) for p in (meta.get("periods") or [1, 5, 10]))
+        ic_method = str(meta.get("ic_method", "spearman"))
+        report = analyze_factor_matrix(
+            panels,
+            prices,
+            periods=periods,
+            ic_method=ic_method,  # type: ignore[arg-type]
+        )
+        registry.update(
+            job_id,
+            status="done",
+            progress=1.0,
+            stage="完成",
+            result={"__meta__": meta, "report": report.to_dict(), "symbols": symbols},
+        )
+    except Exception as e:
+        _log.exception("多因子诊断任务 %s 失败", job_id)
+        registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+def _score_symbols(
+    registry: ProviderRegistry,
+    symbols: list[str],
+    scores_meta: list[dict[str, Any]],
+    when: date,
+    market: Any,
+    lookback_days: int,
+) -> dict[str, float]:
+    """对候选池在 ``when``(或之前最近交易日)截面做多因子合成打分。"""
+    import pandas as pd
+
+    from djinn.data.schema import Adjust
+    from djinn.factor import FactorEngine, make_factor
+    from djinn.screen.scoring import FactorScore, score_cross_section
+
+    scores = [FactorScore(**s) for s in scores_meta]
+    factors = [make_factor(s.factor) for s in scores]
+    # 预留足够自然日覆盖 lookback_days 个交易日
+    start = when - timedelta(days=max(lookback_days * 2, 60))
+    eng = FactorEngine()
+    prices, ohlcv = eng._ohlcv_panels(
+        symbols, start, when, registry, market, Adjust.BACKWARD
+    )
+    fundamentals = _build_fundamental_panels(
+        symbols, prices.index, start, when, registry, market
+    )
+    data = {f.name: f.compute(prices, ohlcv, fundamentals) for f in factors}
+    idx = prices.index[prices.index <= pd.Timestamp(when)]
+    if len(idx) == 0:
+        return {}
+    ts = idx[-1]
+    cross = pd.DataFrame(
+        {name: df.loc[ts] for name, df in data.items() if ts in df.index}
+    )
+    scored = score_cross_section(cross, scores)
+    return {str(k): float(v) for k, v in scored.items()}
+
+
+def _screen_row(symbol: str, snap: Any, score_map: dict[str, float]) -> dict[str, Any]:
+    """单标的选股结果行:symbol + 基本面字段 + 可选得分。"""
+    row: dict[str, Any] = {"symbol": symbol}
+    if snap is not None and symbol in snap.index:
+        for col in snap.columns:
+            row[str(col)] = _json_scalar(snap.loc[symbol, col])
+    if symbol in score_map:
+        row["score"] = score_map[symbol]
+    return row
+
+
+def run_screen_job(
+    registry: JobRegistry,
+    job_id: str,
+    provider_registry: ProviderRegistry | None = None,
+) -> None:
+    """后台执行截面选股:条件过滤 + 可选多因子打分排序,产出股票列表 + 得分。"""
+    from djinn.data import default_registry
+    from djinn.data.providers.fundamentals_router import FundamentalsRouter
+    from djinn.data.schema import Market
+    from djinn.screen.screener import ScreenCondition, Screener
+
+    job = registry.get(job_id)
+    meta = (job.result or {}).get("__meta__", {}) if job and job.result else {}
+    preg = provider_registry or default_registry()
+    try:
+        registry.update(job_id, status="running", progress=0.05, stage="解析候选池")
+        market = Market(meta["market"]) if meta.get("market") else None
+        symbols = _resolve_universe(meta, preg)
+        if not symbols:
+            raise ValueError("候选池为空(需提供 symbols 或可解析的 index)")
+        when = (
+            date.fromisoformat(str(meta["when"])) if meta.get("when") else date.today()
+        )
+
+        registry.update(job_id, progress=0.2, stage=f"拉取 {len(symbols)} 只基本面快照")
+        router = FundamentalsRouter(preg.providers)
+        snap = router.get_snapshot(symbols, when, market)
+        conditions = [ScreenCondition(**c) for c in (meta.get("conditions") or [])]
+        passed = Screener.apply(conditions, snap)
+
+        score_map: dict[str, float] = {}
+        scores_meta = meta.get("scores") or []
+        if scores_meta:
+            registry.update(job_id, progress=0.5, stage="多因子打分排序")
+            score_map = _score_symbols(
+                preg,
+                symbols,
+                scores_meta,
+                when,
+                market,
+                int(meta.get("lookback_days", 120)),
+            )
+            passed = [s for s in passed if s in score_map]
+            passed.sort(key=lambda s: score_map[s], reverse=True)
+            top_n = meta.get("top_n")
+            if top_n:
+                passed = passed[: int(top_n)]
+        else:
+            passed = sorted(passed)
+
+        registry.update(job_id, progress=0.85, stage="汇总结果")
+        rows = [_screen_row(s, snap, score_map) for s in passed]
+        registry.update(
+            job_id,
+            status="done",
+            progress=1.0,
+            stage="完成",
+            result={"__meta__": meta, "count": len(rows), "results": rows},
+        )
+    except Exception as e:
+        _log.exception("选股任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")

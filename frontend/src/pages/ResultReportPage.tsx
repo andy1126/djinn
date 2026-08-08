@@ -9,6 +9,9 @@ import DrawdownChart from '@/components/charts/DrawdownChart'
 import ReturnsHeatmap from '@/components/charts/ReturnsHeatmap'
 import PositionAreaChart from '@/components/charts/PositionAreaChart'
 import TradesTable from '@/components/TradesTable'
+import IndustryPieChart from '@/components/charts/IndustryPieChart'
+import FactorDistChart from '@/components/charts/FactorDistChart'
+import BrinsonBarChart from '@/components/charts/BrinsonBarChart'
 import { exportBacktest } from '@/api/client'
 
 export default function ResultReportPage() {
@@ -97,6 +100,33 @@ export default function ResultReportPage() {
               key: 'positions',
               label: '持仓变化',
               children: <PositionAreaChart weights={report.weights} />,
+            },
+            {
+              key: 'attribution',
+              label: '归因',
+              children: report.attribution || report.factor_exposure ? (
+                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                  {report.attribution && (
+                    <Card size="small" title="Brinson 行业归因(配置 / 选股 / 交互)">
+                      <Typography.Text>
+                        超额收益: {(report.attribution.excess_return ?? 0).toFixed(4)} ·
+                        三效应之和: {(report.attribution.total_effect ?? 0).toFixed(4)}
+                      </Typography.Text>
+                      <BrinsonBarChart brinson={report.attribution} />
+                    </Card>
+                  )}
+                  {report.factor_exposure && (
+                    <>
+                      <Card size="small" title="因子暴露时序">
+                        <FactorDistChart exposures={report.factor_exposure.exposures} />
+                      </Card>
+                      <Card size="small" title="行业权重分布(最末交易日)">
+                        <IndustryPieChart industryDistribution={report.factor_exposure.industry_distribution} />
+                      </Card>
+                    </>
+                  )}
+                </Space>
+              ) : <Typography.Text type="secondary">无归因数据(因子组合策略之外的回测不计算归因)</Typography.Text>,
             },
             {
               key: 'trades',

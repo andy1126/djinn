@@ -4,11 +4,22 @@ import type {
   BacktestReport,
   CacheResponse,
   DataFetchRequest,
+  FactorAnalysisRequest,
+  FactorInfo,
+  FactorListResponse,
+  FactorMatrixRequest,
+  FactorMatrixReport,
+  FactorReport,
+  IndexComponentsResponse,
+  IndexListResponse,
+  IndustryListResponse,
   JobCreated,
   JobStatus,
+  ScreenRequest,
   StrategyListResponse,
   StrategyInfo,
   SweepRequest,
+  UniverseStockListResponse,
 } from '@/types'
 
 // 通过 vite proxy,前缀 /api 转发到 http://localhost:8000
@@ -70,6 +81,63 @@ export const clearCache = async (): Promise<{ status: string }> =>
 // ── 健康检查 ─────────────────────────────────────────
 export const healthCheck = async (): Promise<{ status: string }> =>
   (await http.get('/health')).data
+
+// ── 因子库 / 因子分析 ───────────────────────────────────
+export const listFactors = async (): Promise<FactorListResponse> =>
+  (await http.get('/factors')).data
+
+export const getFactor = async (name: string): Promise<FactorInfo> =>
+  (await http.get(`/factors/${name}`)).data
+
+export const createFactorAnalysis = async (
+  req: FactorAnalysisRequest,
+): Promise<JobCreated> => (await http.post('/factor-analysis', req)).data
+
+export const getFactorAnalysisJob = async (jobId: string): Promise<JobStatus> =>
+  (await http.get(`/factor-analysis/${jobId}`)).data
+
+export const getFactorAnalysisReport = async (jobId: string): Promise<FactorReport> =>
+  (await http.get(`/factor-analysis/${jobId}/report`)).data
+
+// ── 多因子诊断 ─────────────────────────────────────────
+export const createFactorMatrix = async (
+  req: FactorMatrixRequest,
+): Promise<JobCreated> => (await http.post('/factor-matrix', req)).data
+
+export const getFactorMatrixJob = async (jobId: string): Promise<JobStatus> =>
+  (await http.get(`/factor-matrix/${jobId}`)).data
+
+export const getFactorMatrixReport = async (jobId: string): Promise<FactorMatrixReport> =>
+  (await http.get(`/factor-matrix/${jobId}/report`)).data
+
+// ── 选股 ───────────────────────────────────────────────
+export const createScreen = async (req: ScreenRequest): Promise<JobCreated> =>
+  (await http.post('/screens', req)).data
+
+export const getScreenJob = async (jobId: string): Promise<JobStatus> =>
+  (await http.get(`/screens/${jobId}`)).data
+
+// ── 股票池 ─────────────────────────────────────────────
+export const getStockList = async (
+  market?: string,
+): Promise<UniverseStockListResponse> =>
+  (await http.get('/universe/stock-list', { params: { market } })).data
+
+export const listIndexes = async (): Promise<IndexListResponse> =>
+  (await http.get('/universe/indexes')).data
+
+export const getIndexComponents = async (
+  index: string,
+): Promise<IndexComponentsResponse> =>
+  (await http.get(`/universe/index-components/${index}`)).data
+
+export const getIndustries = async (
+  index?: string,
+  symbols?: string[],
+): Promise<IndustryListResponse> =>
+  (await http.get('/universe/industries', {
+    params: { index: index ?? undefined, symbols },
+  })).data
 
 // ── WebSocket 进度 ───────────────────────────────────
 export const subscribeProgress = (

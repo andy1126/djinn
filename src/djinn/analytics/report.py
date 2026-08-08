@@ -47,6 +47,10 @@ class Report:
     weights: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
     config: dict[str, Any] = field(default_factory=dict)
     symbols: list[str] = field(default_factory=list)
+    # ── 归因(Phase 5,可选;``run_backtest(with_attribution=True)`` 填充)──
+    # 均为已序列化的 JSON 友好 dict(BrinsonResult.to_dict / FactorExposureReport.to_dict)。
+    attribution: dict[str, Any] | None = None  # Brinson 行业归因(配置/选股/交互)
+    factor_exposure: dict[str, Any] | None = None  # 因子暴露时序 + 行业权重分布
 
     def summary(self) -> dict[str, Any]:
         """一页式摘要(指标 + 关键统计)。"""

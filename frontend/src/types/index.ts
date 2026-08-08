@@ -36,6 +36,8 @@ export interface JobStatus {
   stage: string
   error: string | null
   result_path: string | null
+  result?: Record<string, unknown> | null
+  kind?: string
 }
 
 // BacktestConfig 子配置
@@ -90,7 +92,14 @@ export interface RebalanceConfig {
 
 export interface PortfolioConfig {
   mode: 'single' | 'portfolio'
-  allocation: 'equal' | 'market_cap' | 'custom'
+  allocation:
+    | 'equal'
+    | 'market_cap'
+    | 'custom'
+    | 'score'
+    | 'risk_parity'
+    | 'min_variance'
+    | 'mean_variance'
   weights?: Record<string, number> | null
   rebalance: RebalanceConfig
 }
@@ -100,6 +109,7 @@ export interface RiskConfig {
   max_total_position: number
   max_sector_weight?: number | null
   sector_map?: Record<string, string> | null
+  max_turnover?: number | null
 }
 
 export interface OutputConfig {
@@ -131,6 +141,22 @@ export interface SweepRequest {
   grid: Record<string, (number | string)[]>
   target: string
   parallel: boolean
+}
+
+/** sweep 单组合结果行(后端 _run_one 返回)。 */
+export interface SweepResultRow {
+  params: Record<string, number | string | boolean | null>
+  config_summary: {
+    strategy: string
+    'universe.index': string | null
+    n_symbols: number
+    'strategy.factor_weights': Record<string, number> | null
+    'portfolio.allocation': string
+    'strategy.n_stocks': number | null
+    'strategy.rebalance_freq': number | null
+    'strategy.params': Record<string, number | string | boolean | null>
+  }
+  [key: string]: unknown
 }
 
 export interface DataFetchRequest {
@@ -218,4 +244,164 @@ export interface BacktestReport {
   rejections: Record<string, number | string>[]
   positions: DataFrameData
   weights: DataFrameData
+  attribution: BrinsonResult | null
+  factor_exposure: FactorExposureReport | null
+}
+
+// ── 归因(Phase 5)─────────────────────────────────────
+export interface BrinsonResult {
+  allocation: SeriesData
+  selection: SeriesData
+  interaction: SeriesData
+  excess_return: number
+  total_effect: number
+}
+
+export interface FactorExposureReport {
+  exposures: DataFrameData
+  industry_distribution: DataFrameData
+}
+
+// ── 因子库 / 因子分析 ────────────────────────────────────
+export interface FactorInfo {
+  name: string
+  category: string
+  description: string
+  params: ParamSchema[]
+}
+
+export interface FactorListResponse {
+  factors: FactorInfo[]
+}
+
+export interface FactorAnalysisRequest {
+  factor: string
+  params?: Record<string, number | string | boolean | null>
+  index?: string | null
+  symbols?: string[] | null
+  market?: string | null
+  start: string
+  end: string
+  adjust?: string
+  ic_method?: string
+  n_quantiles?: number
+  periods?: number[]
+}
+
+export interface ICSummary {
+  ic_mean: number
+  ic_std: number
+  icir: number
+  ic_pos_ratio: number
+  [key: string]: number
+}
+
+export interface FactorReport {
+  factor_name: string
+  ic: SeriesData
+  ic_summary: ICSummary
+  ic_decay: Record<string, SeriesData>
+  quantile_returns: DataFrameData
+  quantile_cumulative: Record<string, SeriesData>
+  long_short: SeriesData
+  monotonicity: number
+  turnover: number
+  ic_by_group: SeriesData
+}
+
+// ── 选股 ───────────────────────────────────────────────
+export type ScreenOp = 'gt' | 'lt' | 'ge' | 'le' | 'eq' | 'between' | 'in'
+
+export interface ScreenCondition {
+  field: string
+  op: ScreenOp
+  value: number | string | boolean | (number | string)[]
+}
+
+export interface FactorScore {
+  factor: string
+  weight: number
+  direction: 1 | -1
+}
+
+export interface ScreenRequest {
+  conditions?: ScreenCondition[]
+  scores?: FactorScore[]
+  top_n?: number | null
+  index?: string | null
+  symbols?: string[] | null
+  market?: string | null
+  when?: string | null
+  lookback_days?: number
+}
+
+export interface ScreenResultRow {
+  symbol: string
+  score: number | null
+  [key: string]: number | string | boolean | null
+}
+
+// ── 股票池 ─────────────────────────────────────────────
+export interface UniverseStock {
+  symbol: string
+  name: string
+  market: string
+}
+
+export interface UniverseStockListResponse {
+  market: string | null
+  count: number
+  stocks: UniverseStock[]
+}
+
+export interface IndexInfo {
+  key: string
+  name: string
+  market: string
+}
+
+export interface IndexListResponse {
+  indexes: IndexInfo[]
+}
+
+export interface IndexComponentsResponse {
+  index: string
+  count: number
+  symbols: string[]
+}
+
+export interface IndustryCount {
+  name: string
+  count: number
+}
+
+export interface IndustryListResponse {
+  industries: IndustryCount[]
+}
+
+// ── 多因子诊断 ─────────────────────────────────────────
+export interface FactorMatrixPoint {
+  factor: string
+  weight: number
+  direction: 1 | -1
+  params?: Record<string, number | string | boolean | null>
+}
+
+export interface FactorMatrixRequest {
+  factors: FactorMatrixPoint[]
+  index?: string | null
+  symbols?: string[] | null
+  market?: string | null
+  start: string
+  end: string
+  adjust?: string
+  ic_method?: string
+  periods?: number[]
+}
+
+export interface FactorMatrixReport {
+  factors: string[]
+  correlation: DataFrameData
+  ic_summary: Record<string, Record<string, ICSummary>>
+  turnover: Record<string, number>
 }

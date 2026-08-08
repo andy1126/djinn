@@ -5,7 +5,15 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from djinn.api.routers import backtests, data, strategies, sweeps
+from djinn.api.routers import (
+    backtests,
+    data,
+    factors,
+    screens,
+    strategies,
+    sweeps,
+    universe,
+)
 from djinn.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -32,15 +40,20 @@ app.include_router(strategies.router)
 app.include_router(data.router)
 app.include_router(backtests.router)
 app.include_router(sweeps.router)
+app.include_router(universe.router)
+app.include_router(factors.router)
+app.include_router(factors.analysis_router)
+app.include_router(factors.matrix_router)
+app.include_router(screens.router)
 
 
 @app.get("/", tags=["health"])
-async def root():
+async def root() -> dict[str, str]:
     """API 根路径健康检查。"""
     return {"status": "ok", "message": "Djinn Backtesting API is running"}
 
 
 @app.get("/health", tags=["health"])
-async def health_check():
+async def health_check() -> dict[str, str]:
     """健康检查端点。"""
     return {"status": "healthy"}

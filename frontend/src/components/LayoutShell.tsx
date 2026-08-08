@@ -12,6 +12,8 @@ import {
   SettingOutlined,
   AppstoreOutlined,
   SwapOutlined,
+  FundOutlined,
+  FilterOutlined,
 } from '@ant-design/icons'
 
 const { Header, Sider, Content } = Layout
@@ -25,7 +27,11 @@ const queryClient = new QueryClient({
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
   { key: '/data', icon: <DatabaseOutlined />, label: '数据管理' },
-  { key: '/strategies', icon: <ExperimentOutlined />, label: '策略配置' },
+  { key: '/universe', icon: <FundOutlined />, label: '股票池' },
+  { key: '/factors', icon: <ExperimentOutlined />, label: '因子分析' },
+  { key: '/factor-matrix', icon: <ExperimentOutlined />, label: '多因子诊断' },
+  { key: '/screener', icon: <FilterOutlined />, label: '选股' },
+  { key: '/strategies', icon: <BarChartOutlined />, label: '策略配置' },
   { key: '/portfolio', icon: <AppstoreOutlined />, label: '组合配置' },
   { key: '/backtest', icon: <ThunderboltOutlined />, label: '运行回测' },
   { key: '/results', icon: <BarChartOutlined />, label: '结果报告' },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from djinn.factor.analysis.forward_returns import compute_forward_returns
 from djinn.factor.analysis.ic import compute_ic, ic_by_group, ic_decay, ic_summary
+from djinn.factor.analysis.matrix import FactorMatrixReport, analyze_factor_matrix
 from djinn.factor.analysis.quantile import (
     long_short_curve,
     monotonicity_score,
@@ -13,8 +14,10 @@ from djinn.factor.analysis.quantile import (
 from djinn.factor.analysis.report import FactorReport, analyze_factor, rank_turnover
 
 __all__ = [
+    "FactorMatrixReport",
     "FactorReport",
     "analyze_factor",
+    "analyze_factor_matrix",
     "compute_forward_returns",
     "compute_ic",
     "ic_by_group",

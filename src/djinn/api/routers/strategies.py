@@ -22,7 +22,7 @@ STRATEGIES = {
 
 
 @router.get("", response_model=StrategyListResponse)
-async def list_strategies():
+async def list_strategies() -> StrategyListResponse:
     """列出所有内置策略及其参数 schema。"""
     items = []
     for name, (cls, desc) in STRATEGIES.items():
@@ -38,7 +38,7 @@ async def list_strategies():
 
 
 @router.get("/{name}", response_model=StrategyInfo)
-async def get_strategy(name: str):
+async def get_strategy(name: str) -> StrategyInfo:
     """获取单个策略的详细信息。"""
     if name not in STRATEGIES:
         raise HTTPException(status_code=404, detail=f"策略 {name} 不存在")

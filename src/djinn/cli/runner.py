@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -22,7 +22,15 @@ from djinn.data import (
     load_benchmark,
 )
 from djinn.data.providers.fundamentals_router import FundamentalsRouter
-from djinn.data.schema import Market
+from djinn.data.schema import (
+    COL_AMOUNT,
+    COL_CLOSE,
+    COL_HIGH,
+    COL_LOW,
+    COL_OPEN,
+    COL_VOLUME,
+    Market,
+)
 from djinn.engine import (
     EngineConfig,
     EventDrivenEngine,
@@ -260,14 +268,126 @@ def _try_fundamental_panels(
         return None
 
 
+# ── 归因(Phase 5 接线)──────────────────────────────────
+def _industry_map_safe(
+    registry: ProviderRegistry, symbols: list[str]
+) -> dict[str, str]:
+    """尽力取 symbol → 行业映射(任一 provider 成功即用,全失败返回 {})。"""
+    for p in registry.providers:
+        try:
+            m = p.get_industry_map(symbols)
+        except NotImplementedError:
+            continue
+        except Exception as e:
+            _log.warning("provider %s 取行业映射失败: %s", p.name, e)
+            continue
+        if m:
+            return {str(k): str(v) for k, v in m.items()}
+    return {}
+
+
+def _ohlcv_from_data(
+    data: dict[str, MarketData],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """由已拉取的 ``{symbol: MarketData}`` 组收盘价宽表与 OHLCV 字段宽表(无 I/O)。"""
+    closes = {s: md.df[COL_CLOSE] for s, md in data.items()}
+    prices = pd.DataFrame(closes).sort_index()
+    ohlcv: dict[str, pd.DataFrame] = {}
+    for c in (COL_OPEN, COL_HIGH, COL_LOW, COL_VOLUME, COL_AMOUNT):
+        cols = {s: md.df[c] for s, md in data.items() if c in md.df.columns}
+        if cols:
+            ohlcv[c] = pd.DataFrame(cols).reindex(prices.index)
+    return prices, ohlcv
+
+
+def _attribution_payloads(
+    weights: pd.DataFrame,
+    data: dict[str, MarketData],
+    industry_map: dict[str, str],
+    factor_panels: dict[str, pd.DataFrame] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """计算 Brinson 行业归因 + (可选)因子暴露/行业分布,返回已序列化 dict。
+
+    Brinson 基准取**交易宇宙等权篮子**(指数基准无成分权重,这是最贴近"选股 /
+    配置是否跑赢 naive 篮子"的诚实口径)。任一环节失败退化为 None,不影响主报告。
+    """
+    from djinn.analytics import brinson_attribution, build_exposure_report
+
+    symbols = [str(c) for c in weights.columns]
+    if not symbols:
+        return None, None
+    rets = {s: data[s].df[COL_CLOSE].pct_change() for s in symbols if s in data}
+    returns = pd.DataFrame(rets)
+    brinson_d: dict[str, Any] | None = None
+    if not returns.empty:
+        bench_w = dict.fromkeys(symbols, 1.0 / len(symbols))
+        try:
+            brinson_d = brinson_attribution(
+                weights, bench_w, returns, industry_map
+            ).to_dict()
+        except Exception as e:
+            _log.warning("Brinson 行业归因失败: %s", e)
+    exposure_d: dict[str, Any] | None = None
+    if factor_panels:
+        try:
+            exposure_d = build_exposure_report(
+                weights, factor_panels, industry_map
+            ).to_dict()
+        except Exception as e:
+            _log.warning("因子暴露 / 行业分布报告失败: %s", e)
+    return brinson_d, exposure_d
+
+
+def _attach_attribution(
+    report: Report,
+    cfg: BacktestConfig,
+    result: Any,
+    data: dict[str, MarketData],
+    registry: ProviderRegistry,
+    market: Market,
+    fundamentals: dict[str, pd.DataFrame] | None,
+) -> None:
+    """把 Brinson 行业归因 + 因子暴露/行业分布填充进 report(in-place)。"""
+    weights = result.weights_curve
+    if weights is None or weights.empty:
+        return
+    symbols = [str(c) for c in weights.columns]
+    industry_map = _industry_map_safe(registry, symbols)
+    # 因子暴露仅对声明了因子集的选股策略有意义
+    factor_panels: dict[str, pd.DataFrame] | None = None
+    fw = cfg.strategy.factor_weights or cfg.universe.factors
+    if _is_portfolio_scope(cfg) and fw:
+        try:
+            prices, ohlcv = _ohlcv_from_data(data)
+            fund = fundamentals or {}
+            factor_panels = {
+                f.name: f.compute(prices, ohlcv, fund)
+                for f in (make_factor(n) for n in fw)
+            }
+        except Exception as e:
+            _log.warning("因子面板构建失败,跳过因子暴露: %s", e)
+            factor_panels = None
+    brinson_d, exposure_d = _attribution_payloads(
+        weights, data, industry_map, factor_panels
+    )
+    report.attribution = brinson_d
+    report.factor_exposure = exposure_d
+
+
 def run_backtest(
     cfg: BacktestConfig,
     *,
     registry: ProviderRegistry | None = None,
     csv_dir: str | None = None,
     cache: DataCache | None = None,
+    with_attribution: bool = False,
 ) -> RunResult:
-    """执行完整回测:数据 → 引擎 → 报告 → 导出。"""
+    """执行完整回测:数据 → 引擎 → 报告 → 导出。
+
+    ``with_attribution=True`` 时额外计算 Brinson 行业归因与(因子组合策略)
+    因子暴露 / 行业分布,填充进 ``report.attribution`` / ``report.factor_exposure``
+    (供 Web 报告端点;CLI 默认关闭以避免额外的行业映射网络开销)。
+    """
     market = cfg.resolved_market()
     if registry is None:
         registry = default_registry(csv_dir=csv_dir, cache=cache)
@@ -315,6 +435,15 @@ def run_backtest(
         rf=cfg.risk_free_rate,
         rolling_window=cfg.output.rolling_window,
     )
+
+    # 归因(可选,Web 报告端点开启)
+    if with_attribution:
+        try:
+            _attach_attribution(
+                report, cfg, result, data, registry, market, fundamentals
+            )
+        except Exception as e:
+            _log.warning("归因计算失败(主报告不受影响): %s", e)
 
     # 导出
     out_dir = Path(cfg.output.dir)

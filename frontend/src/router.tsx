@@ -9,6 +9,10 @@ import ResultReportPage from './pages/ResultReportPage'
 import ComparePage from './pages/ComparePage'
 import SweepPage from './pages/SweepPage'
 import SettingsPage from './pages/SettingsPage'
+import UniversePage from './pages/UniversePage'
+import FactorAnalysisPage from './pages/FactorAnalysisPage'
+import FactorMatrixPage from './pages/FactorMatrixPage'
+import ScreenerPage from './pages/ScreenerPage'
 
 export const router = createBrowserRouter([
   {
@@ -17,6 +21,10 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'data', element: <DataManagerPage /> },
+      { path: 'universe', element: <UniversePage /> },
+      { path: 'factors', element: <FactorAnalysisPage /> },
+      { path: 'factor-matrix', element: <FactorMatrixPage /> },
+      { path: 'screener', element: <ScreenerPage /> },
       { path: 'strategies', element: <StrategyConfigPage /> },
       { path: 'portfolio', element: <PortfolioConfigPage /> },
       { path: 'backtest', element: <BacktestRunPage /> },
