@@ -16,9 +16,11 @@ import type {
   JobCreated,
   JobStatus,
   ScreenRequest,
+  StockDetail,
   StrategyListResponse,
   StrategyInfo,
   SweepRequest,
+  SymbolSearchResponse,
   UniverseStockListResponse,
 } from '@/types'
 
@@ -144,6 +146,19 @@ export const getIndustries = async (
   (await http.get('/universe/industries', {
     params: { index: index ?? undefined, symbols },
   })).data
+
+// ── 股票搜索 / 详情 ────────────────────────────────────
+export const searchStocks = async (
+  q: string,
+  market?: string,
+): Promise<SymbolSearchResponse> =>
+  (await http.get('/stocks/search', { params: { q, market } })).data
+
+export const getStockDetail = async (
+  symbol: string,
+  market?: string,
+): Promise<StockDetail> =>
+  (await http.get(`/stocks/${symbol}`, { params: { market } })).data
 
 // ── WebSocket 进度 ───────────────────────────────────
 export const subscribeProgress = (

@@ -2,7 +2,7 @@
 
 通过 ``yfinance`` 拉取日线,统一规范化列名,应用复权与日历对齐。
 内置 Parquet + 内存缓存,命中完整区间时直接返回。
-指数成分(HSI / SP500)来自 yfiua.github.io 免费 CSV,见 :meth:`get_index_components`。
+指数成分(HSI / SP500 / NASDAQ100 / DOWJONES)来自 yfiua.github.io 免费 CSV,见 :meth:`get_index_components`。
 
 yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
 故 :meth:`_fetch` 内置指数退避重试(见 CLAUDE.md "yfinance 易发网络抖动")。
@@ -10,6 +10,7 @@ yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import date
 
@@ -40,7 +41,7 @@ from djinn.data.schema import (
     Market,
     detect_market,
 )
-from djinn.data.universe import UNIVERSE_INDEX_MAP
+from djinn.data.universe import INDEX_COMPONENTS_TTL_DAYS, UNIVERSE_INDEX_MAP
 from djinn.utils.exceptions import DataError, ProviderError
 from djinn.utils.logging import get_logger
 
@@ -264,19 +265,26 @@ class YahooProvider(DataProvider):
                 time.sleep(self.rate_limit_sec - elapsed)
             self._last_request = time.monotonic()
 
-    # ── 指数成分(HSI / SP500,来自 yfiua.github.io 免费 CSV)──────
-    # 仅处理 UNIVERSE_INDEX_MAP 里带 ``yahoo`` 键的指数(HSI / SP500);
+    # ── 指数成分(HSI / SP500 / NASDAQ100 / DOWJONES,来自 yfiua 免费 CSV)────
+    # 仅处理 UNIVERSE_INDEX_MAP 里带 ``yahoo`` 键的指数(美 / 港宽基);
     # 其余(如 A 股宽基)抛 NotImplementedError 交给更前序的 provider(akshare)。
     def get_index_components(self, index: str) -> list[str]:
         meta = UNIVERSE_INDEX_MAP.get(index)
         if meta is None or "yahoo" not in meta:
             raise NotImplementedError(
-                f"yahoo 不提供指数 {index} 成分(仅支持带 yahoo 键的 HSI/SP500)"
+                f"yahoo 不提供指数 {index} 成分(仅支持带 yahoo 键的美/港宽基)"
             )
         cache_name = f"index_cons_{index.lower()}"
-        cached = self.cache.get_universe(self.name, cache_name)
+        cached = self.cache.get_universe(
+            self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+        )
         if cached is not None and len(cached):
-            return [str(s) for s in cached["symbol"].tolist()]
+            if "name" not in cached.columns:
+                # 旧格式缓存(只有 symbol 列):视为 miss,重拉一次重写为新格式
+                _log.info("yahoo 指数 %s 缓存缺 name 列,重新拉取", index)
+                cached = None
+            else:
+                return [str(s) for s in cached["symbol"].tolist()]
         url = f"https://yfiua.github.io/index-constituents/constituents-{index.lower()}.csv"
         self._throttle()
         _log.info("yahoo 拉取指数 %s 成分: %s", index, url)
@@ -289,12 +297,114 @@ class YahooProvider(DataProvider):
             raise ProviderError(f"yahoo 拉取指数 {index} 成分失败: {e}") from e
         if "Symbol" not in raw.columns or len(raw) == 0:
             raise DataError(f"yahoo 指数 {index} 成分 CSV 缺少 Symbol 列或为空")
-        symbols = [str(s).strip() for s in raw["Symbol"].tolist() if str(s).strip()]
-        symbols = list(dict.fromkeys(symbols))  # 去重保序
+        # 并行提取 (symbol, name),保持去重保序;Name 列缺失时名称置空串
+        raw_names = raw["Name"].tolist() if "Name" in raw.columns else [""] * len(raw)
+        pairs: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for i, s in enumerate(raw["Symbol"].tolist()):
+            sym = str(s).strip()
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            n = raw_names[i] if i < len(raw_names) else None
+            name = str(n).strip() if n is not None and str(n).strip() else ""
+            pairs.append((sym, name))
+        symbols = [p[0] for p in pairs]
+        names = [p[1] for p in pairs]
         self.cache.put_universe(
-            self.name, cache_name, pd.DataFrame({"symbol": symbols})
+            self.name, cache_name, pd.DataFrame({"symbol": symbols, "name": names})
         )
         return symbols
+
+    def get_index_component_names(self, index: str) -> dict[str, str]:
+        """指数成分 symbol → 名称映射(与 :meth:`get_index_components` 同源)。"""
+        meta = UNIVERSE_INDEX_MAP.get(index)
+        if meta is None or "yahoo" not in meta:
+            raise NotImplementedError(
+                f"yahoo 不提供指数 {index} 成分名称(仅支持带 yahoo 键的美/港宽基)"
+            )
+        cache_name = f"index_cons_{index.lower()}"
+        cached = self.cache.get_universe(
+            self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+        )
+        if cached is None or len(cached) == 0 or "name" not in cached.columns:
+            self.get_index_components(index)  # 未拉取 / 旧格式 / 超龄 → 拉取或刷新
+            cached = self.cache.get_universe(
+                self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+            )
+        if cached is None or len(cached) == 0 or "name" not in cached.columns:
+            return {}
+        return {
+            str(s): str(n)
+            for s, n in zip(
+                cached["symbol"].tolist(), cached["name"].tolist(), strict=False
+            )
+        }
+
+    def search_symbols(
+        self, query: str, market: Market | None = None
+    ) -> list[tuple[str, str]]:
+        """按代码联想美 / 港标的(``yf.Search``),返回 ``(symbol, name)``。
+
+        yfinance 搜索按代码 / 英文名匹配(A 股不在此列,交给 akshare)。
+        """
+        if market is Market.CN:
+            return []
+        q = query.strip()
+        if not q:
+            return []
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        try:
+            res = yf.Search(q, max_results=20)
+            quotes = list(res.quotes or [])
+        except Exception as e:
+            _log.warning("yfinance 搜索 %s 失败: %s", q, e)
+            return []
+        out: list[tuple[str, str]] = []
+        for qq in quotes:
+            sym = str(qq.get("symbol", "")).strip()
+            if not sym:
+                continue
+            name = str(qq.get("shortname") or qq.get("longname") or "").strip()
+            out.append((sym, name))
+        return out
+
+    def get_stock_name(self, symbol: str, market: Market | None = None) -> str:
+        if market is Market.CN:
+            raise NotImplementedError("yahoo 不支持 A 股名称")
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        try:
+            info = yf.Ticker(symbol).info or {}
+        except Exception as e:
+            _log.warning("yfinance %s name 拉取失败: %s", symbol, e)
+            return ""
+        return str(info.get("longName") or info.get("shortName") or "")
+
+    def get_stock_price(self, symbol: str, market: Market | None = None) -> float:
+        if market is Market.CN:
+            raise NotImplementedError("yahoo 不支持 A 股价格")
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        try:
+            info = yf.Ticker(symbol).info or {}
+        except Exception as e:
+            _log.warning("yfinance %s price 拉取失败: %s", symbol, e)
+            raise DataError(f"yfinance 无 {symbol} 价格") from e
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if price is None:
+            raise DataError(f"yfinance 无 {symbol} 价格")
+        f = float(price)
+        if not math.isfinite(f):
+            raise DataError(f"yfinance {symbol} 价格非法")
+        return f
 
 
 def _fnum(v: object) -> float:

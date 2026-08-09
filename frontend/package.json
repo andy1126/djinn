@@ -10,6 +10,7 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.4.0",
     "@tanstack/react-query": "^5.62.0",
     "antd": "^5.22.0",
     "axios": "^1.7.9",

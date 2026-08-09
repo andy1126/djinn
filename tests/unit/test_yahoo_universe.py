@@ -7,7 +7,10 @@ mock HTTP(``urllib.request.urlopen``)避免触网;真实网络拉取标 ``networ
 from __future__ import annotations
 
 import io
+import os
+import time
 
+import pandas as pd
 import pytest
 
 from djinn.data.cache import DataCache
@@ -55,6 +58,21 @@ def test_yahoo_index_components_sp500_dot_passthrough(monkeypatch, tmp_path) -> 
     assert "BRK.B" in cons
     assert "BF.B" in cons
     assert "NVDA" in cons
+
+
+def test_yahoo_index_components_nasdaq100(monkeypatch, tmp_path) -> None:
+    """NASDAQ100 走 nasdaq100 CSV(URL 由 index.lower() 派生)。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
+        captured["url"] = url
+        return io.BytesIO(_csv_bytes(["NVDA", "AAPL", "MSFT", "GOOGL"]))
+
+    _monkey_urlopen(monkeypatch, fake_urlopen)
+    cons = p.get_index_components("NASDAQ100")
+    assert cons == ["NVDA", "AAPL", "MSFT", "GOOGL"]
+    assert str(captured["url"]).endswith("constituents-nasdaq100.csv")
 
 
 def test_yahoo_index_components_uses_cache(monkeypatch, tmp_path) -> None:
@@ -113,6 +131,105 @@ def test_yf_symbol_normalization() -> None:
     assert p._yf_symbol("NVDA") == "NVDA"
     assert p._yf_symbol("0101.HK") == "0101.HK"
     assert p._yf_symbol("600519.SH") == "600519.SH"
+
+
+def test_yahoo_index_components_dowjones(monkeypatch, tmp_path) -> None:
+    """DOWJONES 走 dowjones CSV(URL 由 index.lower() 派生)。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
+        captured["url"] = url
+        return io.BytesIO(_csv_bytes(["GS", "CAT", "MSFT"]))
+
+    _monkey_urlopen(monkeypatch, fake_urlopen)
+    cons = p.get_index_components("DOWJONES")
+    assert cons == ["GS", "CAT", "MSFT"]
+    assert str(captured["url"]).endswith("constituents-dowjones.csv")
+
+
+def test_yahoo_index_component_names(monkeypatch, tmp_path) -> None:
+    """名称映射与符号同源:缓存 symbol+name,名称取自 CSV Name 列。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+
+    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
+        return io.BytesIO(_csv_bytes(["NVDA", "BRK.B", "BF.B", "AAPL"]))
+
+    _monkey_urlopen(monkeypatch, fake_urlopen)
+    cons = p.get_index_components("SP500")
+    assert cons == ["NVDA", "BRK.B", "BF.B", "AAPL"]
+    names = p.get_index_component_names("SP500")
+    assert names == {
+        "NVDA": "Name0",
+        "BRK.B": "Name1",
+        "BF.B": "Name2",
+        "AAPL": "Name3",
+    }
+
+
+def test_yahoo_index_component_names_not_implemented(tmp_path) -> None:
+    """非 yahoo 指数抛 NotImplementedError(交给 akshare)。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    with pytest.raises(NotImplementedError):
+        p.get_index_component_names("CSI300")
+    with pytest.raises(NotImplementedError):
+        p.get_index_component_names("UNKNOWN")
+
+
+def test_yahoo_index_component_names_old_cache_self_heal(monkeypatch, tmp_path) -> None:
+    """旧格式缓存(只有 symbol 列)自愈:重拉一次并重写为 symbol+name。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    # 预写旧格式缓存(只有 symbol 列)
+    p.cache.put_universe(
+        "yahoo", "index_cons_sp500", pd.DataFrame({"symbol": ["NVDA", "AAPL"]})
+    )
+    calls = {"n": 0}
+
+    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
+        calls["n"] += 1
+        return io.BytesIO(_csv_bytes(["NVDA", "AAPL"]))
+
+    _monkey_urlopen(monkeypatch, fake_urlopen)
+    # 旧格式被当作 miss → 重拉一次(不再是缓存命中)
+    cons = p.get_index_components("SP500")
+    assert cons == ["NVDA", "AAPL"]
+    assert calls["n"] == 1
+    # 名称方法返回新格式的名称
+    names = p.get_index_component_names("SP500")
+    assert names == {"NVDA": "Name0", "AAPL": "Name1"}
+    # 二次调用不再触网
+    p.get_index_components("SP500")
+    assert calls["n"] == 1
+
+
+def test_yahoo_index_components_ttl_refetch(monkeypatch, tmp_path) -> None:
+    """缓存超龄(>30 天)时重拉,不再命中旧缓存。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    # 先写入一份新格式缓存
+    p.cache.put_universe(
+        "yahoo",
+        "index_cons_sp500",
+        pd.DataFrame({"symbol": ["NVDA"], "name": ["Nvidia"]}),
+    )
+    # 把磁盘 mtime 改到 40 天前 → 超龄
+    key = DataCache.make_key("yahoo", "index_cons_sp500", dtype="universe")
+    path = p.cache._parquet_path(key)
+    old = time.time() - 40 * 86400
+    os.utime(path, (old, old))
+    calls = {"n": 0}
+
+    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
+        calls["n"] += 1
+        return io.BytesIO(_csv_bytes(["AAPL", "NVDA"]))
+
+    _monkey_urlopen(monkeypatch, fake_urlopen)
+    # 超龄 → 重拉一次,拿到新成分
+    cons = p.get_index_components("SP500")
+    assert cons == ["AAPL", "NVDA"]
+    assert calls["n"] == 1
+    # 重拉后 mtime 更新,二次命中缓存不触网
+    p.get_index_components("SP500")
+    assert calls["n"] == 1
 
 
 # ── 真实网络拉取(需网络,标 network)───────────────────────

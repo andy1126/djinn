@@ -17,7 +17,6 @@ const { RangePicker } = DatePicker
 
 interface FormValues {
   index?: string
-  market?: string
   range: [Date, Date]
   ic_method: string
 }
@@ -164,7 +163,6 @@ export default function FactorMatrixPage() {
         params: d.params,
       })),
       index: v.index || null,
-      market: v.market || null,
       start: v.range[0].toISOString().slice(0, 10),
       end: v.range[1].toISOString().slice(0, 10),
       ic_method: v.ic_method,
@@ -244,13 +242,10 @@ export default function FactorMatrixPage() {
           form={form}
           layout="vertical"
           onFinish={onSubmit}
-          initialValues={{ index: 'CSI300', market: 'CN', ic_method: 'spearman' }}
+          initialValues={{ index: 'CSI300', ic_method: 'spearman' }}
         >
           <Form.Item name="index" label="宽基指数">
-            <Select options={['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500'].map((k) => ({ value: k, label: k }))} />
-          </Form.Item>
-          <Form.Item name="market" label="市场">
-            <Select options={['CN', 'HK', 'US'].map((m) => ({ value: m, label: m }))} />
+            <Select options={['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500', 'NASDAQ100', 'DOWJONES'].map((k) => ({ value: k, label: k }))} />
           </Form.Item>
           <Form.Item name="range" label="区间" rules={[{ required: true, message: '请选择区间' }]}>
             <RangePicker />

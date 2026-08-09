@@ -21,7 +21,7 @@ const AXIS_OPTIONS = [
 ]
 
 const ALLOCATION_OPTIONS = ['equal', 'market_cap', 'custom', 'score', 'risk_parity', 'min_variance', 'mean_variance']
-const INDEX_OPTIONS = ['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500']
+const INDEX_OPTIONS = ['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500', 'NASDAQ100', 'DOWJONES']
 
 interface AxisDraft {
   uid: number

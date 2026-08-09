@@ -6,6 +6,7 @@ Phase 1 数据层:A 股日线通过 ``akshare.stock_zh_a_hist`` 拉取,含复权
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import date
 
@@ -39,7 +40,11 @@ from djinn.data.schema import (
     Adjust,
     Market,
 )
-from djinn.data.universe import UNIVERSE_INDEX_MAP, normalize_cn_symbol
+from djinn.data.universe import (
+    INDEX_COMPONENTS_TTL_DAYS,
+    UNIVERSE_INDEX_MAP,
+    normalize_cn_symbol,
+)
 from djinn.utils.exceptions import DataError, ProviderError
 from djinn.utils.logging import get_logger
 
@@ -74,6 +79,18 @@ def _has_akshare() -> bool:
 def _normalize_ak_code(symbol: str) -> str:
     """``000300.SH`` → ``000300``(akshare 用纯代码 + period 参数区分市场)。"""
     return symbol.replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+
+
+def _sina_symbol(code: str) -> str:
+    """纯 6 位代码 → 新浪源符号(``600519`` → ``sh600519``)。
+
+    新浪 ``stock_zh_a_daily`` 用 ``sh/sz/bj`` 前缀区分交易所。
+    """
+    if code.startswith(("60", "68", "9", "11", "13")):
+        return f"sh{code}"
+    if code.startswith(("43", "83", "87", "88")):
+        return f"bj{code}"
+    return f"sz{code}"
 
 
 class AkShareProvider(DataProvider):
@@ -141,9 +158,8 @@ class AkShareProvider(DataProvider):
         ]
         _log.info("akshare 拉取 %s [%s ~ %s] adjust=%s", code, start, end, ak_adjust)
         try:
-            raw = ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
+            raw = ak.stock_zh_a_daily(
+                symbol=_sina_symbol(code),
                 start_date=start.strftime("%Y%m%d"),
                 end_date=end.strftime("%Y%m%d"),
                 adjust=ak_adjust,
@@ -225,6 +241,11 @@ class AkShareProvider(DataProvider):
         out = pd.DataFrame(index=df.index)
         out["name"] = df.get("名称", "")
         out["market"] = Market.CN.value
+        if "最新价" in df.columns:
+            price = pd.to_numeric(df["最新价"], errors="coerce").to_numpy()
+        else:
+            price = pd.Series(float("nan"), index=df.index).to_numpy()
+        out["price"] = price
         # 估值字段(东财快照口径;缺失列降级为 NaN)
         num = {
             COL_PE: "市盈率-动态",
@@ -236,31 +257,70 @@ class AkShareProvider(DataProvider):
             out[dst] = pd.to_numeric(df[src], errors="coerce") if src in df else pd.NA
         return out
 
+    def _code_name_df(self) -> pd.DataFrame:
+        """全 A 股代码 + 名称(新浪 ``stock_info_a_code_name``),universe 缓存。
+
+        东财 ``stock_zh_a_spot_em`` 在当前网络不可达时,搜索 / 名称 / 列表
+        改走新浪源(仅 code + name,无估值字段)。整帧缓存,按月刷新。
+        """
+        cached = self.cache.get_universe(self.name, "code_name_sina")
+        if cached is not None and len(cached):
+            return cached
+        try:
+            import akshare as ak
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("akshare 未安装") from e
+        _log.info("akshare 拉取全 A 股代码名称 stock_info_a_code_name")
+        try:
+            raw = ak.stock_info_a_code_name()
+        except Exception as e:
+            raise ProviderError(f"akshare 全 A 股代码名称失败: {e}") from e
+        if raw is None or len(raw) == 0:
+            raise DataError("akshare 全 A 股代码名称返回空")
+        symbols = [normalize_cn_symbol(str(c)) for c in raw["code"].tolist()]
+        names = [str(n).strip() for n in raw["name"].tolist()]
+        out = pd.DataFrame({"name": names}, index=pd.Index(symbols, name="symbol"))
+        out["market"] = Market.CN.value
+        self.cache.put_universe(self.name, "code_name_sina", out)
+        return out
+
     def get_stock_list(self, market: Market | None = None) -> pd.DataFrame:
         if market is not None and market is not Market.CN:
             raise NotImplementedError("akshare get_stock_list 仅支持 A 股")
-        df = self._spot_df()
+        df = self._code_name_df()
         return df[["name", "market"]].copy()
 
-    def get_index_components(self, index: str) -> list[str]:
-        # index 既可为 UNIVERSE_INDEX_MAP 键(如 CSI300),也可为 akshare 纯代码
+    def _index_cache_name(self, index: str) -> str:
+        """校验 akshare 支持性并返回指数成分的 universe 缓存键。
+
+        index 既可为 UNIVERSE_INDEX_MAP 键(如 CSI300),也可为 akshare 纯代码。
+        """
         meta = UNIVERSE_INDEX_MAP.get(index)
         if meta is not None:
             if meta.get("market") is not Market.CN or "akshare" not in meta:
                 raise NotImplementedError(
                     f"akshare 不提供指数 {index} 成分(仅支持 A 股宽基)"
                 )
-            code = str(meta["akshare"])
-        else:
-            code = _normalize_ak_code(index)
-        cache_name = f"index_cons_{code}"
-        cached = self.cache.get_universe(self.name, cache_name)
+            return f"index_cons_{meta['akshare']}"
+        return f"index_cons_{_normalize_ak_code(index)}"
+
+    def get_index_components(self, index: str) -> list[str]:
+        cache_name = self._index_cache_name(index)
+        cached = self.cache.get_universe(
+            self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+        )
         if cached is not None and len(cached):
-            return [str(s) for s in cached["symbol"].tolist()]
+            if "name" not in cached.columns:
+                # 旧格式缓存(只有 symbol 列):视为 miss,重拉一次重写为新格式
+                _log.info("akshare 指数 %s 缓存缺 name 列,重新拉取", index)
+                cached = None
+            else:
+                return [str(s) for s in cached["symbol"].tolist()]
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
             raise ProviderError("akshare 未安装") from e
+        code = cache_name.removeprefix("index_cons_")
         self._throttle()
         _log.info("akshare 拉取指数 %s 成分 index_stock_cons", code)
         try:
@@ -281,10 +341,45 @@ class AkShareProvider(DataProvider):
         if col is None:
             raise DataError(f"akshare 指数成分返回缺少代码列: {list(raw.columns)}")
         symbols = [normalize_cn_symbol(str(c)) for c in raw[col].tolist()]
+        # 并行提取名称(兼容多列名),缺失置空串
+        names = [""] * len(symbols)
+        name_col = next(
+            (
+                c
+                for c in ("品种名称", "成分券名称", "con_name", "name")
+                if c in raw.columns
+            ),
+            None,
+        )
+        if name_col is not None:
+            raw_name = raw[name_col].tolist()
+            for i in range(len(symbols)):
+                n = raw_name[i] if i < len(raw_name) else None
+                names[i] = str(n).strip() if n is not None and str(n).strip() else ""
         self.cache.put_universe(
-            self.name, cache_name, pd.DataFrame({"symbol": symbols})
+            self.name, cache_name, pd.DataFrame({"symbol": symbols, "name": names})
         )
         return symbols
+
+    def get_index_component_names(self, index: str) -> dict[str, str]:
+        """指数成分 symbol → 名称映射(与 :meth:`get_index_components` 同源)。"""
+        cache_name = self._index_cache_name(index)  # 非 A 股抛 NotImplementedError
+        cached = self.cache.get_universe(
+            self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+        )
+        if cached is None or len(cached) == 0 or "name" not in cached.columns:
+            self.get_index_components(index)  # 未拉取 / 旧格式 / 超龄 → 拉取或刷新
+            cached = self.cache.get_universe(
+                self.name, cache_name, max_age_days=INDEX_COMPONENTS_TTL_DAYS
+            )
+        if cached is None or len(cached) == 0 or "name" not in cached.columns:
+            return {}
+        return {
+            str(s): str(n)
+            for s, n in zip(
+                cached["symbol"].tolist(), cached["name"].tolist(), strict=False
+            )
+        }
 
     def get_industry_map(self, symbols: list[str]) -> dict[str, str]:
         rev = self._industry_reverse_map()
@@ -413,3 +508,40 @@ class AkShareProvider(DataProvider):
         out[COL_REPORT_DATE] = rep
         out[COL_ANNOUNCE_DATE] = rep + pd.Timedelta(days=45)  # 近似公告日
         return out.sort_index()
+
+    def search_symbols(
+        self, query: str, market: Market | None = None
+    ) -> list[tuple[str, str]]:
+        """按代码 / 名称子串匹配 A 股(全 A 股快照),返回 ``(symbol, name)``。"""
+        if market is not None and market is not Market.CN:
+            return []
+        q = query.strip().upper()
+        if not q:
+            return []
+        df = self._code_name_df()
+        out: list[tuple[str, str]] = []
+        for sym, row in df.iterrows():
+            name = str(row.get("name", "") or "")
+            if q in str(sym).upper() or q in name.upper():
+                out.append((str(sym), name))
+            if len(out) >= 20:
+                break
+        return out
+
+    def get_stock_name(self, symbol: str, market: Market | None = None) -> str:
+        if market is not None and market is not Market.CN:
+            raise NotImplementedError("akshare 仅支持 A 股名称")
+        df = self._code_name_df()
+        return str(df.loc[symbol, "name"]) if symbol in df.index else ""
+
+    def get_stock_price(self, symbol: str, market: Market | None = None) -> float:
+        if market is not None and market is not Market.CN:
+            raise NotImplementedError("akshare 仅支持 A 股价格")
+        df = self._spot_df()
+        if symbol not in df.index or "price" not in df.columns:
+            raise DataError(f"akshare 无 {symbol} 价格")
+        raw = df.loc[symbol, "price"]
+        f = float(pd.to_numeric(raw, errors="coerce"))
+        if not math.isfinite(f):
+            raise DataError(f"akshare {symbol} 价格非法")
+        return f

@@ -11,7 +11,7 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from djinn.api.deps import get_registry
-from djinn.api.jobs import _index_components
+from djinn.api.jobs import _index_components, _index_components_with_provider
 from djinn.api.schemas import (
     IndexComponentsResponse,
     IndexInfo,
@@ -24,8 +24,11 @@ from djinn.api.schemas import (
 from djinn.data.provider import ProviderRegistry
 from djinn.data.schema import Market
 from djinn.data.universe import UNIVERSE_INDEX_MAP
+from djinn.utils.logging import get_logger
 
 router = APIRouter(prefix="/universe", tags=["universe"])
+
+_log = get_logger(__name__)
 
 
 @router.get("/stock-list", response_model=UniverseStockListResponse)
@@ -79,13 +82,25 @@ async def list_indexes() -> IndexListResponse:
 async def index_components(
     index: str, registry: ProviderRegistry = Depends(get_registry)
 ) -> IndexComponentsResponse:
-    """指数成分股代码列表。"""
-    symbols = _index_components(registry, index)
+    """指数成分股代码列表(附可选成分名称,与 symbols 位置对齐)。"""
+    symbols, provider = _index_components_with_provider(registry, index)
     if not symbols:
         raise HTTPException(
             status_code=501, detail=f"无 provider 提供指数 {index} 成分"
         )
-    return IndexComponentsResponse(index=index, count=len(symbols), symbols=symbols)
+    names: list[str] = []
+    if provider is not None:
+        try:
+            mapping = provider.get_index_component_names(index)
+        except NotImplementedError:
+            mapping = {}
+        except Exception as e:
+            _log.warning("provider %s 取指数 %s 名称失败: %s", provider.name, index, e)
+            mapping = {}
+        names = [str(mapping.get(s, "")) for s in symbols]
+    return IndexComponentsResponse(
+        index=index, count=len(symbols), symbols=symbols, names=names
+    )
 
 
 @router.get("/industries", response_model=IndustryListResponse)

@@ -125,6 +125,24 @@ class SymbolSearchResponse(BaseModel):
     results: list[SymbolSearchResult]
 
 
+class StockDetail(BaseModel):
+    """单只股票详情(估值 + 财务 + 价格,字段按数据源能力降级)。"""
+
+    symbol: str
+    market: str
+    name: str = ""
+    price: float | None = None
+    pe: float | None = None
+    pb: float | None = None
+    ps: float | None = None
+    market_cap: float | None = None
+    float_cap: float | None = None
+    roe: float | None = None
+    gross_margin: float | None = None
+    revenue_yoy: float | None = None
+    profit_yoy: float | None = None
+
+
 # ── 股票池(universe)────────────────────────────────────
 class UniverseStock(BaseModel):
     symbol: str
@@ -152,6 +170,7 @@ class IndexComponentsResponse(BaseModel):
     index: str
     count: int
     symbols: list[str]
+    names: list[str] = Field(default_factory=list)
 
 
 class IndustryCount(BaseModel):

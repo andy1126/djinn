@@ -101,6 +101,23 @@ class _StubProvider(DataProvider):
             return []
         return list(_SYMBOLS)
 
+    def get_index_component_names(self, index: str) -> dict[str, str]:
+        return {s: f"名称{i}" for i, s in enumerate(_SYMBOLS)}
+
+    def search_symbols(
+        self, query: str, market: Market | None = None
+    ) -> list[tuple[str, str]]:
+        q = query.upper()
+        return [(s, f"名称{i}") for i, s in enumerate(_SYMBOLS) if q in s.upper()]
+
+    def get_stock_name(self, symbol: str, market: Market | None = None) -> str:
+        return f"股票{_code_num(symbol)}" if symbol in _SYMBOLS else ""
+
+    def get_stock_price(self, symbol: str, market: Market | None = None) -> float:
+        if symbol not in _SYMBOLS:
+            raise KeyError(symbol)
+        return 10.0 + _code_num(symbol)
+
     def get_industry_map(self, symbols: list[str]) -> dict[str, str]:
         return {s: _INDUSTRIES[s] for s in symbols if s in _INDUSTRIES}
 
@@ -348,10 +365,42 @@ def test_universe_index_components() -> None:
     data = resp.json()
     assert data["count"] == len(_SYMBOLS)
     assert data["symbols"] == _SYMBOLS
+    # 名称与符号位置对齐(stub 返回 名称{i})
+    assert data["names"] == [f"名称{i}" for i in range(len(_SYMBOLS))]
 
 
 def test_universe_index_components_empty_501() -> None:
     assert client.get("/universe/index-components/EMPTY").status_code == 501
+
+
+def test_stocks_search() -> None:
+    """股票搜索:按代码子串匹配 stub 池。"""
+    resp = client.get("/stocks/search", params={"q": "600000", "market": "CN"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["query"] == "600000"
+    assert any(r["symbol"] == "600000.SH" for r in data["results"])
+
+
+def test_stocks_detail() -> None:
+    """股票详情:估值 + 财务 + 名称 / 价格。"""
+    resp = client.get("/stocks/600519.SH", params={"market": "CN"})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["symbol"] == "600519.SH"
+    assert d["market"] == "CN"
+    assert d["name"]  # 名称非空
+    assert d["price"] is not None  # stub 返回价格
+    assert d["pe"] is not None  # 估值来自 stub get_fundamentals
+
+
+def test_stocks_detail_unknown_symbol() -> None:
+    """未知代码返回 200,但详情字段为空(null)而非报错。"""
+    resp = client.get("/stocks/XXXXX", params={"market": "CN"})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["symbol"] == "XXXXX"
+    assert d["price"] is None
 
 
 def test_universe_industries() -> None:

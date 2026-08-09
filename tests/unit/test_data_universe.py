@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+
 import pandas as pd
 import pytest
 
@@ -23,6 +26,19 @@ def test_normalize_cn_symbol() -> None:
 def test_universe_index_map_cn() -> None:
     assert UNIVERSE_INDEX_MAP["CSI300"]["market"] is Market.CN
     assert UNIVERSE_INDEX_MAP["CSI300"]["akshare"] == "000300"
+
+
+def test_universe_index_map_us() -> None:
+    assert UNIVERSE_INDEX_MAP["NASDAQ100"]["market"] is Market.US
+    assert UNIVERSE_INDEX_MAP["NASDAQ100"]["yahoo"] == "^NDX"
+    assert UNIVERSE_INDEX_MAP["HSI"]["market"] is Market.HK
+    assert UNIVERSE_INDEX_MAP["SP500"]["market"] is Market.US
+
+
+def test_universe_index_map_dowjones() -> None:
+    assert UNIVERSE_INDEX_MAP["DOWJONES"]["market"] is Market.US
+    assert UNIVERSE_INDEX_MAP["DOWJONES"]["yahoo"] == "^DJI"
+    assert UNIVERSE_INDEX_MAP["DOWJONES"]["name"] == "道琼斯工业指数"
 
 
 def test_cache_dtype_keys_distinct() -> None:
@@ -68,6 +84,30 @@ def test_cache_second_read_uses_memory(tmp_path, monkeypatch) -> None:
     cache.get_universe("mock", "cons")  # 内存已命中
     cache.get_universe("mock", "cons")
     assert calls["n"] == 0
+
+
+def test_cache_universe_ttl_expires(tmp_path) -> None:
+    """get_universe 的 max_age_days:磁盘 mtime 超龄视为 miss(清内存返回 None)。"""
+    cache = DataCache(cache_dir=tmp_path)
+    cache.put_universe("mock", "cons", pd.DataFrame({"symbol": ["NVDA"]}))
+    # 未过期:命中
+    assert cache.get_universe("mock", "cons", max_age_days=30) is not None
+    # 把磁盘文件 mtime 改到 40 天前 → 超龄 miss
+    key = DataCache.make_key("mock", "cons", dtype="universe")
+    path = cache._parquet_path(key)
+    old = time.time() - 40 * 86400
+    os.utime(path, (old, old))
+    assert cache.get_universe("mock", "cons", max_age_days=30) is None
+
+
+def test_cache_universe_ttl_missing_file_fresh(tmp_path) -> None:
+    """无 max_age_days 时保持原行为;磁盘不存在时超龄检查不误判。"""
+    cache = DataCache(cache_dir=tmp_path)
+    # 从未写入 → get_universe 返回 None(且不因 TTL 报错)
+    assert cache.get_universe("mock", "never", max_age_days=30) is None
+    # 不传 max_age_days 保持向后兼容
+    cache.put_universe("mock", "cons", pd.DataFrame({"symbol": ["NVDA"]}))
+    assert cache.get_universe("mock", "cons") is not None
 
 
 # ── 真实 akshare(需网络)─────────────────────────────────

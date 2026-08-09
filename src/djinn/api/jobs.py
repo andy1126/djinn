@@ -19,7 +19,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from djinn.data.provider import ProviderRegistry
+from djinn.data.provider import DataProvider, ProviderRegistry
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -374,8 +374,10 @@ def _json_scalar(v: Any) -> Any:
     return f if math.isfinite(f) else None
 
 
-def _index_components(registry: ProviderRegistry, index: str) -> list[str]:
-    """从首个支持指数成分的 provider 取成分股(全部失败返回 [])。"""
+def _index_components_with_provider(
+    registry: ProviderRegistry, index: str
+) -> tuple[list[str], DataProvider | None]:
+    """取首个成功 provider 的成分股,并返回该 provider(供调用方取成分名称)。"""
     for p in registry.providers:
         try:
             comps = p.get_index_components(index)
@@ -385,8 +387,14 @@ def _index_components(registry: ProviderRegistry, index: str) -> list[str]:
             _log.warning("provider %s 取指数 %s 成分失败: %s", p.name, index, e)
             continue
         if comps:
-            return [str(s) for s in comps]
-    return []
+            return [str(s) for s in comps], p
+    return [], None
+
+
+def _index_components(registry: ProviderRegistry, index: str) -> list[str]:
+    """从首个支持指数成分的 provider 取成分股(全部失败返回 [])。"""
+    symbols, _ = _index_components_with_provider(registry, index)
+    return symbols
 
 
 def _resolve_universe(meta: dict[str, Any], registry: ProviderRegistry) -> list[str]:

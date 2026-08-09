@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from collections import OrderedDict
 from datetime import date
 from pathlib import Path
@@ -115,8 +116,26 @@ class DataCache:
     def put_universe(self, provider: str, name: str, df: pd.DataFrame) -> None:
         self._write(self.make_key(provider, name, dtype="universe"), df)
 
-    def get_universe(self, provider: str, name: str) -> pd.DataFrame | None:
+    def get_universe(
+        self,
+        provider: str,
+        name: str,
+        max_age_days: float | None = None,
+    ) -> pd.DataFrame | None:
+        """读股票池缓存(整帧);``max_age_days`` 给定时超龄视为 miss。
+
+        用磁盘 parquet 文件的 mtime 作为写入时间(``_write`` 总先落盘):
+        即使内存 LRU 命中,也先检查磁盘 mtime,超龄则丢弃内存拷贝返回
+        None,由调用方重拉重写。磁盘不存在(刚写入未落盘)视为新鲜。
+        """
         key = self.make_key(provider, name, dtype="universe")
+        if max_age_days is not None:
+            path = self._parquet_path(key)
+            if path.exists():
+                age_sec = time.time() - path.stat().st_mtime
+                if age_sec > max_age_days * 86400:
+                    self._mem.pop(key, None)  # 超龄:丢弃内存拷贝
+                    return None
         if key in self._mem:
             self._mem.move_to_end(key)
             return self._mem[key]

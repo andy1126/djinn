@@ -69,6 +69,32 @@ class DataProvider(ABC):
         """指数成分股代码列表(djinn 标准后缀形式,如 ``000300.SH``)。"""
         raise NotImplementedError(f"{type(self).__name__} 不支持 get_index_components")
 
+    def get_index_component_names(self, index: str) -> dict[str, str]:
+        """指数成分 symbol → 名称映射(与 :meth:`get_index_components` 同源)。
+
+        无名称数据返回空 dict;不支持抛 NotImplementedError。
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} 不支持 get_index_component_names"
+        )
+
+    def search_symbols(
+        self, query: str, market: Market | None = None
+    ) -> list[tuple[str, str]]:
+        """按代码 / 名称搜索标的,返回 ``(symbol, name)`` 列表。
+
+        供股票搜索端点联想用;不支持抛 NotImplementedError。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 search_symbols")
+
+    def get_stock_name(self, symbol: str, market: Market | None = None) -> str:
+        """单标的名称;不支持抛 NotImplementedError。"""
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_stock_name")
+
+    def get_stock_price(self, symbol: str, market: Market | None = None) -> float:
+        """单标的当前价;不支持抛 NotImplementedError。"""
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_stock_price")
+
     def get_industry_map(self, symbols: list[str]) -> dict[str, str]:
         """symbol → 行业名映射(缺失的 symbol 不在返回里)。"""
         raise NotImplementedError(f"{type(self).__name__} 不支持 get_industry_map")

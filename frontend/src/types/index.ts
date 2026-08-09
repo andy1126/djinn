@@ -368,6 +368,7 @@ export interface IndexComponentsResponse {
   index: string
   count: number
   symbols: string[]
+  names: string[]
 }
 
 export interface IndustryCount {
@@ -377,6 +378,34 @@ export interface IndustryCount {
 
 export interface IndustryListResponse {
   industries: IndustryCount[]
+}
+
+// ── 股票搜索 / 详情 ─────────────────────────────────────
+export interface SymbolSearchResult {
+  symbol: string
+  market: string
+  name: string
+}
+
+export interface SymbolSearchResponse {
+  query: string
+  results: SymbolSearchResult[]
+}
+
+export interface StockDetail {
+  symbol: string
+  market: string
+  name: string
+  price: number | null
+  pe: number | null
+  pb: number | null
+  ps: number | null
+  market_cap: number | null
+  float_cap: number | null
+  roe: number | null
+  gross_margin: number | null
+  revenue_yoy: number | null
+  profit_yoy: number | null
 }
 
 // ── 多因子诊断 ─────────────────────────────────────────
