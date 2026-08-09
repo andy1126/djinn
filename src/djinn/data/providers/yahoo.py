@@ -2,6 +2,7 @@
 
 通过 ``yfinance`` 拉取日线,统一规范化列名,应用复权与日历对齐。
 内置 Parquet + 内存缓存,命中完整区间时直接返回。
+指数成分(HSI / SP500)来自 yfiua.github.io 免费 CSV,见 :meth:`get_index_components`。
 
 yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
 故 :meth:`_fetch` 内置指数退避重试(见 CLAUDE.md "yfinance 易发网络抖动")。
@@ -39,6 +40,7 @@ from djinn.data.schema import (
     Market,
     detect_market,
 )
+from djinn.data.universe import UNIVERSE_INDEX_MAP
 from djinn.utils.exceptions import DataError, ProviderError
 from djinn.utils.logging import get_logger
 
@@ -88,13 +90,14 @@ class YahooProvider(DataProvider):
         end: date,
         adjust: Adjust = Adjust.BACKWARD,
     ) -> MarketData:
-        cached = self.cache.get(self.name, symbol, adjust)
+        ysym = self._yf_symbol(symbol)
+        cached = self.cache.get(self.name, ysym, adjust)
         if DataCache.covers(cached, start, end):
             assert cached is not None
             df = cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
         else:
-            new = self._fetch(symbol, start, end)
-            df = self.cache.merge(self.name, symbol, adjust, new)
+            new = self._fetch(ysym, start, end)
+            df = self.cache.merge(self.name, ysym, adjust, new)
             df = df.loc[pd.Timestamp(start) : pd.Timestamp(end)]
         if len(df) == 0:
             raise DataError(f"Yahoo {symbol} 在 [{start}, {end}] 无数据")
@@ -106,6 +109,18 @@ class YahooProvider(DataProvider):
         df = apply_adjust(df, adjust)
         df = df.loc[pd.Timestamp(start) : pd.Timestamp(end)]
         return MarketData(symbol=symbol, market=market, df=df, adjust=adjust)
+
+    def _yf_symbol(self, symbol: str) -> str:
+        """djinn 符号 → yfinance 符号:美股带点代码(如 ``BRK.B``)需改连字符。
+
+        yfinance 对 ``BRK.B`` / ``BF.B`` 不识别(抛 delisted),连字符形式
+        ``BRK-B`` 才有效;``.HK`` / A 股后缀不在此列,原样返回。
+        """
+        if symbol.count(".") == 1 and not symbol.upper().endswith(
+            (".HK", ".SH", ".SZ", ".BJ")
+        ):
+            return symbol.replace(".", "-")
+        return symbol
 
     def _fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         try:
@@ -248,6 +263,38 @@ class YahooProvider(DataProvider):
             if elapsed < self.rate_limit_sec:
                 time.sleep(self.rate_limit_sec - elapsed)
             self._last_request = time.monotonic()
+
+    # ── 指数成分(HSI / SP500,来自 yfiua.github.io 免费 CSV)──────
+    # 仅处理 UNIVERSE_INDEX_MAP 里带 ``yahoo`` 键的指数(HSI / SP500);
+    # 其余(如 A 股宽基)抛 NotImplementedError 交给更前序的 provider(akshare)。
+    def get_index_components(self, index: str) -> list[str]:
+        meta = UNIVERSE_INDEX_MAP.get(index)
+        if meta is None or "yahoo" not in meta:
+            raise NotImplementedError(
+                f"yahoo 不提供指数 {index} 成分(仅支持带 yahoo 键的 HSI/SP500)"
+            )
+        cache_name = f"index_cons_{index.lower()}"
+        cached = self.cache.get_universe(self.name, cache_name)
+        if cached is not None and len(cached):
+            return [str(s) for s in cached["symbol"].tolist()]
+        url = f"https://yfiua.github.io/index-constituents/constituents-{index.lower()}.csv"
+        self._throttle()
+        _log.info("yahoo 拉取指数 %s 成分: %s", index, url)
+        try:
+            import urllib.request
+
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                raw = pd.read_csv(resp)
+        except Exception as e:
+            raise ProviderError(f"yahoo 拉取指数 {index} 成分失败: {e}") from e
+        if "Symbol" not in raw.columns or len(raw) == 0:
+            raise DataError(f"yahoo 指数 {index} 成分 CSV 缺少 Symbol 列或为空")
+        symbols = [str(s).strip() for s in raw["Symbol"].tolist() if str(s).strip()]
+        symbols = list(dict.fromkeys(symbols))  # 去重保序
+        self.cache.put_universe(
+            self.name, cache_name, pd.DataFrame({"symbol": symbols})
+        )
+        return symbols
 
 
 def _fnum(v: object) -> float:

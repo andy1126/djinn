@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from djinn.api.deps import get_cache, get_job_registry
+from djinn.api.jobs import recover_orphaned_jobs
 from djinn.api.routers import (
     backtests,
     data,
@@ -14,9 +19,26 @@ from djinn.api.routers import (
     sweeps,
     universe,
 )
+from djinn.data import default_registry
 from djinn.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """启动钩子:恢复进程重启前被中断的后台任务(见 recover_orphaned_jobs)。
+
+    测试环境(TestClient 不用 ``with`` 不触发 lifespan,且 ``DJINN_TEST=1``
+    守卫)不执行恢复,避免误恢复真实任务。
+    """
+    registry = get_job_registry()
+    preg = default_registry(cache=get_cache())
+    recovered = recover_orphaned_jobs(registry, preg)
+    if recovered:
+        logger.info("启动恢复 %d 个孤儿任务", recovered)
+    yield
+
 
 app = FastAPI(
     title="Djinn Backtesting API",
@@ -24,6 +46,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS 配置(允许前端访问)

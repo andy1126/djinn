@@ -67,6 +67,7 @@ Data(数据提供器 + 缓存 + 基本面/universe) → Factor(因子引擎/分�
 
 - 长任务(回测/扫描)用 `BackgroundTasks` 后台线程执行,`JobRegistry`(SQLite,`.cache/djinn_jobs.db`)持久化状态 + 进度回调。
 - **Job result 的 `__meta__` 约定**:`JobRegistry.create(kind, meta=...)` 把请求元数据(config/grid/target)存入 `result["__meta__"]`。后台任务完成时**必须保留 `__meta__`**(与 summary/results 合并),否则 `/backtests/{id}/report` 与 `/export` 端点拿不到 config 重新生成报告会 400。改 `run_backtest_job` / `run_sweep_job` 的最终 `result={...}` 时务必带上 `meta`。
+- **孤儿任务恢复**(`api/jobs.py` 的 `recover_orphaned_jobs`):长任务在进程内后台线程执行,进程重启会杀线程,只留 `running`/`pending` 快照。`main.py` 的 `lifespan` 启动钩子扫描并重新提交续跑。**关键依赖 `__meta__` 约定**:每个 runner 首行从 `result["__meta__"]` 重建输入,故恢复只需 `(registry, job_id)`。新增长任务 runner 时**必须**:(1) 从 `__meta__` 自恢复输入,(2) 把 kind 加进 `_RUNNERS` 分发表。测试隔离:`DJINN_TEST=1` 时恢复返回 0,`TestClient` 不用 `with` 不触发 lifespan,双保险。
 - WebSocket 进度推送(`/backtests/{id}/progress`):后台线程回调里**只能用 `loop.call_soon_threadsafe(queue.put_nowait, job)`** 投递到事件循环,不能用 `asyncio.create_task`(不在事件循环线程)。
 - `data/fetch` 端点:请求体里 `start/end` 是 str,必须在路由内 `date.fromisoformat()` 转成 `date` 再传给 provider,否则底层 `date` vs `str` 比较抛错。
 - Dispatcher:`get_job_registry` / `get_cache` 用 `lru_cache` 单例;`get_registry(cache=Depends(get_cache))` 注入 `ProviderRegistry`(universe/factor/screen 端点用)。测试用 `app.dependency_overrides[...]` 注入独立 `JobRegistry` + stub `ProviderRegistry`(见 `tests/unit/test_api.py` / `test_api_alpha.py`)。
@@ -120,8 +121,10 @@ djinn data fetch -c configs/backtest.example.yaml
 - **语言**:UI 文案 / 注释用中文,代码标识符用英文
 - **提交**:`type: description`(feat / fix / chore / refactor / test / docs)
 - **数据源**:AkShare 免费免 key 作 A/港股默认,Tushare 需 token 作高质量补充,`yfinance` 作美股,本地 CSV 作离线/测试
+- **指数成分**(`get_index_components`):A 股宽基走 akshare(`index_stock_cons`);HSI / SP500 走 `yahoo.py` 的 `get_index_components`,从 **yfiua.github.io 免费 CSV**(`index-constituents` 仓库,`constituents-{hsi|sp500}.csv`)读**成分清单**(仅 `Symbol, Name` 两列,**无权重**)。**yfinance 无指数成分接口**(实测 `Ticker.info`/`funds_data`/`.components` 均无,源码零命中),yfiua 是 yfinance 生态对"Yahoo 不提供成分"的社区补全,符号即 Yahoo 原生格式(`0101.HK` / `BRK.B`)。两条链路:yfiua 只提供"有哪些股票"的符号清单,价格数据仍走 `YahooProvider.get_ohlcv` → `yf.Ticker().history()`(即项目一直在用的 yahoo 请求工具)。CSV 无权重,HSI/SP500 成分按等权对待(与 akshare 的 A 股一致)。缓存键 `index_cons_{index.lower()}`,复用 `cache.put_universe/get_universe`。
 - **缓存**:Parquet(`.cache/djinn/`)+ 内存 LRU,key = `(provider, symbol, adjust, freq)`
 - **yfinance 易发网络抖动**:失败先查缓存是否已命中,provider 重试逻辑见 `data/providers/yahoo.py`;不要因一次性 yfinance 失败判定代码有 bug。
+- **美股带点代码转连字符**:yfinance 对 `BRK.B` / `BF.B` 抛 delisted,需转 `BRK-B`;`YahooProvider._yf_symbol` 处理,`.HK` / A 股后缀守卫不误改写(见 `data/providers/yahoo.py`)。
 
 ## 测试
 

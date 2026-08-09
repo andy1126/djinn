@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Card, Input, Segmented, Space, Spin, Table, Tag, Typography } from 'antd'
+import { Card, Select, Segmented, Space, Spin, Table, Tag, Typography } from 'antd'
 import { getStockList, getIndexComponents, getIndustries, listIndexes } from '@/api/client'
 import type { IndexInfo, UniverseStock } from '@/types'
+
+/** 全市场列表视图:HK / US 无全市场接口,映射到对应宽基指数成分作为代表池。 */
+const MARKET_INDEX: Record<string, string> = { HK: 'HSI', US: 'SP500' }
 
 /**
  * 股票池浏览:全市场列表 / 宽基指数成分 / 行业分布三个视图。
@@ -13,11 +16,26 @@ export default function UniversePage() {
   const [index, setIndex] = useState<string>('CSI300')
 
   const { data: indexes } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
+  const indexOptions = (indexes?.indexes || []).map((i: IndexInfo) => ({
+    value: i.key,
+    label: `${i.key} · ${i.name}`,
+  }))
+  const indexNames = (indexes?.indexes || []).reduce(
+    (acc, i: IndexInfo) => ({ ...acc, [i.key]: i.name }),
+    {} as Record<string, string>,
+  )
 
+  // 全市场列表:CN 走全市场;HK / US 无全市场接口,映射到宽基指数成分
+  const stockTarget = MARKET_INDEX[market] ?? null
   const stockList = useQuery({
     queryKey: ['stock-list', market],
     queryFn: () => getStockList(market),
-    enabled: mode === 'stock',
+    enabled: mode === 'stock' && stockTarget === null,
+  })
+  const stockIndexComps = useQuery({
+    queryKey: ['index-components', stockTarget],
+    queryFn: () => getIndexComponents(stockTarget!),
+    enabled: mode === 'stock' && stockTarget !== null,
   })
 
   const indexComps = useQuery({
@@ -32,9 +50,15 @@ export default function UniversePage() {
     enabled: mode === 'industry',
   })
 
-  const indexNames = (indexes?.indexes || []).reduce(
-    (acc, i: IndexInfo) => ({ ...acc, [i.key]: i.name }),
-    {} as Record<string, string>,
+  const indexSelect = (
+    <Select
+      style={{ width: 240 }}
+      value={index}
+      onChange={setIndex}
+      options={indexOptions}
+      showSearch
+      optionFilterProp="label"
+    />
   )
 
   return (
@@ -52,7 +76,7 @@ export default function UniversePage() {
 
       {mode === 'stock' && (
         <Card
-          title="全市场股票列表"
+          title={stockTarget ? `${indexNames[stockTarget] || stockTarget} 成分股` : '全市场股票列表'}
           extra={
             <Segmented
               value={market}
@@ -61,7 +85,32 @@ export default function UniversePage() {
             />
           }
         >
-          {stockList.isLoading ? (
+          {stockTarget !== null ? (
+            stockIndexComps.isLoading ? (
+              <Spin />
+            ) : stockIndexComps.isError ? (
+              <Typography.Text type="danger">无法解析指数成分(确认指数键与 provider 支持)。</Typography.Text>
+            ) : (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Typography.Text>
+                  {indexNames[stockTarget] || stockTarget} · {stockIndexComps.data?.count ?? 0} 只
+                </Typography.Text>
+                <Table
+                  size="small"
+                  rowKey={(_, i) => String(i)}
+                  dataSource={(stockIndexComps.data?.symbols || []).map((s, i) => ({ symbol: s, key: i }))}
+                  pagination={{ pageSize: 50 }}
+                  columns={[
+                    { title: '代码', dataIndex: 'symbol', key: 'symbol' },
+                    {
+                      title: '市场', key: 'market',
+                      render: () => <Tag>{market}</Tag>,
+                    },
+                  ]}
+                />
+              </Space>
+            )
+          ) : stockList.isLoading ? (
             <Spin />
           ) : stockList.isError ? (
             <Typography.Text type="danger">股票列表需 akshare,目前不可用(A 股支持)。</Typography.Text>
@@ -82,17 +131,7 @@ export default function UniversePage() {
       )}
 
       {mode === 'index' && (
-        <Card
-          title="指数成分股"
-          extra={
-            <Input
-              style={{ width: 200 }}
-              value={index}
-              onChange={(e) => setIndex(e.target.value.toUpperCase())}
-              placeholder="如 CSI300"
-            />
-          }
-        >
+        <Card title="指数成分股" extra={indexSelect}>
           {indexComps.isLoading ? (
             <Spin />
           ) : indexComps.isError ? (
@@ -115,17 +154,7 @@ export default function UniversePage() {
       )}
 
       {mode === 'industry' && (
-        <Card
-          title="行业分布"
-          extra={
-            <Input
-              style={{ width: 200 }}
-              value={index}
-              onChange={(e) => setIndex(e.target.value.toUpperCase())}
-              placeholder="如 CSI300"
-            />
-          }
-        >
+        <Card title="行业分布" extra={indexSelect}>
           {industries.isLoading ? (
             <Spin />
           ) : industries.isError ? (

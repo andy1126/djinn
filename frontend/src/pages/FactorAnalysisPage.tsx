@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Tag, Typography,
+  Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Typography,
 } from 'antd'
 import {
   listFactors,
   createFactorAnalysis,
+  listFactorAnalyses,
   getFactorAnalysisJob,
   getFactorAnalysisReport,
 } from '@/api/client'
-import type { FactorInfo, ParamSchema } from '@/types'
+import type { FactorInfo, JobStatus, ParamSchema } from '@/types'
 import QuantileCurveChart from '@/components/charts/QuantileCurveChart'
 import ICBarChart from '@/components/charts/ICBarChart'
 
@@ -87,6 +88,15 @@ export default function FactorAnalysisPage() {
   })
   const factors: FactorInfo[] = factorsResp?.factors || []
 
+  const { data: historyJobs } = useQuery({
+    queryKey: ['factor-analysis-jobs'],
+    queryFn: () => listFactorAnalyses(20),
+    refetchInterval: (query) => {
+      const data = query.state.data as JobStatus[] | undefined
+      return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
+    },
+  })
+
   const poll = useQuery({
     queryKey: ['factor-analysis-job', jobId],
     queryFn: () => getFactorAnalysisJob(jobId!),
@@ -115,6 +125,7 @@ export default function FactorAnalysisPage() {
       setReport(null)
       message.success(`因子分析任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['factor-analysis-job', resp.job_id] })
+      qc.invalidateQueries({ queryKey: ['factor-analysis-jobs'] })
     },
     onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
   })
@@ -213,11 +224,40 @@ export default function FactorAnalysisPage() {
             <ICBarChart ic={report.ic} />
           </Card>
           <Card title="分层累计收益">
-            <QuantileCurveChart quantileReturns={report.quantile_cumulative} />
+            <QuantileCurveChart quantileReturns={report.quantile_returns} />
           </Card>
         </Space>
       )}
       {jobId && !job && <Spin />}
+
+      <Card title="历史因子分析任务">
+        <Table
+          columns={[
+            {
+              title: '任务', key: 'job_id',
+              render: (_: any, r: JobStatus) => (
+                <Space direction="vertical" size={0}>
+                  <span>{r.title || r.job_id}</span>
+                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
+                </Space>
+              ),
+            },
+            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
+            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
+            { title: '阶段', dataIndex: 'stage', key: 'stage' },
+            { title: '错误', dataIndex: 'error', key: 'error', render: (e: string) => e || '—' },
+            {
+              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
+                <Button size="small" onClick={() => { setJobId(r.job_id); setReport(null) }}>查看</Button>
+              ),
+            },
+          ]}
+          dataSource={(historyJobs || []) as JobStatus[]}
+          rowKey="job_id"
+          size="small"
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
     </Space>
   )
 }

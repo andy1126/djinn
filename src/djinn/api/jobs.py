@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import threading
 import uuid
@@ -681,3 +682,52 @@ def run_screen_job(
     except Exception as e:
         _log.exception("选股任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+# ── 孤儿任务恢复(进程重启)──────────────────────────────
+# 长任务经 BackgroundTasks 在进程内后台线程执行,进程重启即线程被杀,
+# 只留下持久化的 running/pending 快照。启动时扫描并重新提交续跑。
+# 每个 runner 首行从 job 行的 __meta__ 重建输入(config/grid/factor/index 等),
+# 故只需 (registry, job_id) 即可复现原任务。
+_RUNNERS: dict[str, Callable[..., None]] = {
+    "backtest": run_backtest_job,
+    "sweep": run_sweep_job,
+    "factor-analysis": run_factor_analysis_job,
+    "factor-matrix": run_factor_matrix_job,
+    "screen": run_screen_job,
+}
+
+
+def recover_orphaned_jobs(
+    registry: JobRegistry,
+    provider_registry: ProviderRegistry | None = None,
+) -> int:
+    """启动时重新提交 running / pending 孤儿任务,返回恢复数。
+
+    用后台线程(而非 ``BackgroundTasks``——启动阶段无 HTTP 请求上下文)。
+    传入 ``provider_registry`` 复用共享缓存,避免恢复任务另建默认 registry
+    造成缓存不一致。
+
+    测试环境(``DJINN_TEST=1``)下不执行:测试注入 stub registry,不应恢复真实任务。
+    """
+    if os.environ.get("DJINN_TEST") == "1":
+        return 0
+    # list 需遍历全部 kind(其 kind 参数是单值过滤),故不传 kind、放大 limit。
+    jobs = registry.list(limit=1000)
+    orphaned = [
+        j for j in jobs if j.status in ("running", "pending") and j.kind in _RUNNERS
+    ]
+    for job in orphaned:
+        try:
+            thread = threading.Thread(
+                target=_RUNNERS[job.kind],
+                args=(registry, job.job_id),
+                kwargs={"provider_registry": provider_registry},
+                daemon=True,
+                name=f"recover-{job.kind}-{job.job_id}",
+            )
+            thread.start()
+            _log.info("恢复孤儿任务 %s (%s)", job.job_id, job.kind)
+        except Exception as e:
+            _log.error("恢复任务 %s 失败: %s", job.job_id, e)
+    return len(orphaned)

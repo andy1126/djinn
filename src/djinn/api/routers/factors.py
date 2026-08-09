@@ -80,6 +80,15 @@ async def create_factor_analysis(
     return JobCreated(job_id=job.job_id, status="pending")
 
 
+@analysis_router.get("", response_model=list[JobStatus])
+async def list_factor_analyses(
+    limit: int = 50, registry: JobRegistry = Depends(get_job_registry)
+) -> list[JobStatus]:
+    """列出历史因子分析任务。"""
+    jobs = registry.list(limit=limit, kind="factor-analysis")
+    return [JobStatus(**job.to_dict()) for job in jobs]
+
+
 @analysis_router.get("/{job_id}", response_model=JobStatus)
 async def get_factor_analysis(
     job_id: str, registry: JobRegistry = Depends(get_job_registry)
@@ -132,6 +141,15 @@ async def create_factor_matrix(
     job = registry.create("factor-matrix", meta=meta)
     background_tasks.add_task(run_factor_matrix_job, registry, job.job_id, preg)
     return JobCreated(job_id=job.job_id, status="pending")
+
+
+@matrix_router.get("", response_model=list[JobStatus])
+async def list_factor_matrices(
+    limit: int = 50, registry: JobRegistry = Depends(get_job_registry)
+) -> list[JobStatus]:
+    """列出历史多因子诊断任务。"""
+    jobs = registry.list(limit=limit, kind="factor-matrix")
+    return [JobStatus(**job.to_dict()) for job in jobs]
 
 
 @matrix_router.get("/{job_id}", response_model=JobStatus)

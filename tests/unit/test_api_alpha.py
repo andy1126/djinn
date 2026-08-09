@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("DJINN_TEST", "1")
 
 from djinn.api.deps import get_job_registry, get_registry
-from djinn.api.jobs import JobRegistry
+from djinn.api.jobs import JobRegistry, recover_orphaned_jobs
 from djinn.api.main import app
 from djinn.data.market_data import MarketData
 from djinn.data.provider import DataProvider, ProviderRegistry
@@ -219,6 +219,58 @@ def test_factor_analysis_report_400_when_not_done() -> None:
     job = _test_registry.create("factor-analysis", meta={"factor": "momentum"})
     resp = client.get(f"/factor-analysis/{job.job_id}/report")
     assert resp.status_code == 400
+
+
+def test_list_factor_analysis_jobs() -> None:
+    """历史因子分析任务列表(GET /factor-analysis)只含 factor-analysis 类型。"""
+    created = client.post(
+        "/factor-analysis",
+        json={
+            "factor": "momentum",
+            "symbols": _SYMBOLS,
+            "start": _START,
+            "end": _END,
+            "periods": [1],
+        },
+    ).json()["job_id"]
+    _wait_done(created, "/factor-analysis")
+    resp = client.get("/factor-analysis")
+    assert resp.status_code == 200
+    jobs = resp.json()
+    assert isinstance(jobs, list)
+    ids = [j["job_id"] for j in jobs]
+    assert created in ids
+    assert all(j["kind"] == "factor-analysis" for j in jobs)
+    row = next(j for j in jobs if j["job_id"] == created)
+    assert row["status"] == "done"
+    assert row["title"].startswith("因子分析 momentum")
+
+
+def test_list_factor_matrix_jobs() -> None:
+    """历史多因子诊断任务列表(GET /factor-matrix)只含 factor-matrix 类型。"""
+    created = client.post(
+        "/factor-matrix",
+        json={
+            "factors": [
+                {"factor": "momentum", "weight": 1.0, "direction": 1},
+                {"factor": "bp", "weight": 1.0, "direction": 1},
+            ],
+            "symbols": _SYMBOLS,
+            "start": _START,
+            "end": _END,
+            "periods": [1],
+        },
+    ).json()["job_id"]
+    _wait_done(created, "/factor-matrix")
+    resp = client.get("/factor-matrix")
+    assert resp.status_code == 200
+    jobs = resp.json()
+    assert isinstance(jobs, list)
+    ids = [j["job_id"] for j in jobs]
+    assert created in ids
+    assert all(j["kind"] == "factor-matrix" for j in jobs)
+    row = next(j for j in jobs if j["job_id"] == created)
+    assert row["status"] == "done"
 
 
 # ── 选股 ───────────────────────────────────────────────
@@ -572,3 +624,66 @@ def test_sweep_max_drawdown_sorted_descending() -> None:
     mdds = [r["max_drawdown"] for r in body["result"]["results"]]
     # 降序:最接近 0(回撤最浅)的在前 —— max_drawdown ≤ 0,值越大越好
     assert mdds == sorted(mdds, reverse=True)
+
+
+# ── 孤儿任务恢复(进程重启)──────────────────────────────
+def _make_running_job(reg: JobRegistry, kind: str) -> str:
+    """造一个 running 状态的孤儿任务(模拟进程重启中断)。"""
+    if kind == "factor-analysis":
+        meta = {
+            "factor": "momentum",
+            "symbols": _SYMBOLS,
+            "start": _START,
+            "end": _END,
+            "periods": [1],
+            "title": "因子分析 momentum",
+        }
+    elif kind == "screen":
+        meta = {
+            "symbols": _SYMBOLS,
+            "conditions": [{"field": "pe", "op": "lt", "value": 30}],
+            "title": "选股",
+        }
+    else:
+        raise ValueError(f"测试未覆盖 kind: {kind}")
+    job = reg.create(kind, meta=meta)
+    reg.update(job.job_id, status="running", progress=0.5, stage="中途")
+    return job.job_id
+
+
+def test_recover_orphaned_jobs_resubmits(monkeypatch, tmp_path) -> None:
+    """running/pending 孤儿任务被重新提交,用 stub provider 跑完到 done。"""
+    monkeypatch.delenv("DJINN_TEST", raising=False)  # 关闭守卫,让恢复生效
+    reg = JobRegistry(db_path=str(tmp_path / "recover.db"))
+    fa_id = _make_running_job(reg, "factor-analysis")
+    scr_id = _make_running_job(reg, "screen")
+    done_id = reg.create("factor-analysis", meta={"factor": "momentum"}).job_id
+    reg.update(done_id, status="done")  # 已完成任务不应被恢复
+
+    n = recover_orphaned_jobs(reg, _stub_registry)
+    assert n == 2  # 只恢复 running/pending,不动 done
+
+    # 等恢复线程跑完(确定性 stub 很快)
+    for _ in range(100):
+        fa = reg.get(fa_id)
+        scr = reg.get(scr_id)
+        if fa.status == "done" and scr.status == "done":
+            break
+        import time
+
+        time.sleep(0.05)
+    assert reg.get(fa_id).status == "done"
+    assert reg.get(fa_id).error is None
+    assert reg.get(scr_id).status == "done"
+    assert reg.get(done_id).status == "done"  # 未被触碰
+
+
+def test_recover_orphaned_jobs_skipped_in_test_env(monkeypatch, tmp_path) -> None:
+    """DJINN_TEST=1 时恢复被禁用(测试隔离,避免误恢复真实任务)。"""
+    monkeypatch.setenv("DJINN_TEST", "1")
+    reg = JobRegistry(db_path=str(tmp_path / "guard.db"))
+    _make_running_job(reg, "factor-analysis")
+    assert recover_orphaned_jobs(reg, _stub_registry) == 0
+    # 任务仍是 running,未被重新提交
+    job = reg.list(limit=10)[0]
+    assert job.status == "running"

@@ -1,15 +1,16 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Typography,
 } from 'antd'
 import {
   listFactors,
   createFactorMatrix,
+  listFactorMatrices,
   getFactorMatrixJob,
   getFactorMatrixReport,
 } from '@/api/client'
-import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, ParamSchema } from '@/types'
+import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, JobStatus, ParamSchema } from '@/types'
 import MatrixHeatmap from '@/components/charts/MatrixHeatmap'
 
 const { RangePicker } = DatePicker
@@ -79,6 +80,7 @@ let _uid = 0
  * 多因子诊断页:选 2~8 个因子 + 权重 + 方向 → 后台任务 → 相关矩阵热力图 + 每因子 IC 汇总。
  */
 export default function FactorMatrixPage() {
+  const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
   const [jobId, setJobId] = useState<string | null>(null)
   const [report, setReport] = useState<FactorMatrixReport | null>(null)
@@ -89,6 +91,15 @@ export default function FactorMatrixPage() {
     queryFn: listFactors,
   })
   const factors: FactorInfo[] = factorsResp?.factors || []
+
+  const { data: historyJobs } = useQuery({
+    queryKey: ['factor-matrix-jobs'],
+    queryFn: () => listFactorMatrices(20),
+    refetchInterval: (query) => {
+      const data = query.state.data as JobStatus[] | undefined
+      return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
+    },
+  })
 
   const poll = useQuery({
     queryKey: ['factor-matrix-job', jobId],
@@ -116,6 +127,8 @@ export default function FactorMatrixPage() {
       setJobId(resp.job_id)
       setReport(null)
       message.success(`多因子诊断任务已创建: ${resp.job_id}`)
+      qc.invalidateQueries({ queryKey: ['factor-matrix-job', resp.job_id] })
+      qc.invalidateQueries({ queryKey: ['factor-matrix-jobs'] })
     },
     onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
   })
@@ -315,6 +328,35 @@ export default function FactorMatrixPage() {
         </Space>
       )}
       {jobId && !job && <Spin />}
+
+      <Card title="历史多因子诊断任务">
+        <Table
+          columns={[
+            {
+              title: '任务', key: 'job_id',
+              render: (_: any, r: JobStatus) => (
+                <Space direction="vertical" size={0}>
+                  <span>{r.title || r.job_id}</span>
+                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
+                </Space>
+              ),
+            },
+            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
+            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
+            { title: '阶段', dataIndex: 'stage', key: 'stage' },
+            { title: '错误', dataIndex: 'error', key: 'error', render: (e: string) => e || '—' },
+            {
+              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
+                <Button size="small" onClick={() => { setJobId(r.job_id); setReport(null) }}>查看</Button>
+              ),
+            },
+          ]}
+          dataSource={(historyJobs || []) as JobStatus[]}
+          rowKey="job_id"
+          size="small"
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
     </Space>
   )
 }

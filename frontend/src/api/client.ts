@@ -93,6 +93,9 @@ export const createFactorAnalysis = async (
   req: FactorAnalysisRequest,
 ): Promise<JobCreated> => (await http.post('/factor-analysis', req)).data
 
+export const listFactorAnalyses = async (limit = 50): Promise<JobStatus[]> =>
+  (await http.get(`/factor-analysis?limit=${limit}`)).data
+
 export const getFactorAnalysisJob = async (jobId: string): Promise<JobStatus> =>
   (await http.get(`/factor-analysis/${jobId}`)).data
 
@@ -103,6 +106,9 @@ export const getFactorAnalysisReport = async (jobId: string): Promise<FactorRepo
 export const createFactorMatrix = async (
   req: FactorMatrixRequest,
 ): Promise<JobCreated> => (await http.post('/factor-matrix', req)).data
+
+export const listFactorMatrices = async (limit = 50): Promise<JobStatus[]> =>
+  (await http.get(`/factor-matrix?limit=${limit}`)).data
 
 export const getFactorMatrixJob = async (jobId: string): Promise<JobStatus> =>
   (await http.get(`/factor-matrix/${jobId}`)).data
