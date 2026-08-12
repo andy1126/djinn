@@ -83,11 +83,12 @@ async def index_components(
     index: str, registry: ProviderRegistry = Depends(get_registry)
 ) -> IndexComponentsResponse:
     """指数成分股代码列表(附可选成分名称,与 symbols 位置对齐)。"""
-    symbols, provider = _index_components_with_provider(registry, index)
+    symbols, provider, errors = _index_components_with_provider(registry, index)
     if not symbols:
-        raise HTTPException(
-            status_code=501, detail=f"无 provider 提供指数 {index} 成分"
-        )
+        detail = f"无 provider 提供指数 {index} 成分"
+        if errors:
+            detail += ";" + "; ".join(errors)
+        raise HTTPException(status_code=501, detail=detail)
     names: list[str] = []
     if provider is not None:
         try:

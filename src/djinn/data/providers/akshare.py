@@ -146,7 +146,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装(pip install djinn[akshare])") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         if self.rate_limit_sec > 0:
             elapsed = time.monotonic() - self._last_request
             if elapsed < self.rate_limit_sec:
@@ -218,7 +220,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         self._throttle()
         _log.info("akshare 拉取全 A 股快照 stock_zh_a_spot_em")
         try:
@@ -269,7 +273,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         _log.info("akshare 拉取全 A 股代码名称 stock_info_a_code_name")
         try:
             raw = ak.stock_info_a_code_name()
@@ -319,7 +325,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         code = cache_name.removeprefix("index_cons_")
         self._throttle()
         _log.info("akshare 拉取指数 %s 成分 index_stock_cons", code)
@@ -399,7 +407,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         self._throttle()
         _log.info("akshare 拉取行业板块列表 stock_board_industry_name_em")
         try:
@@ -464,7 +474,9 @@ class AkShareProvider(DataProvider):
         try:
             import akshare as ak
         except ImportError as e:  # pragma: no cover
-            raise ProviderError("akshare 未安装") from e
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
         self._throttle()
         _log.info("akshare 拉取 %s 财务指标 stock_financial_analysis_indicator", code)
         try:

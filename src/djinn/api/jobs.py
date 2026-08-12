@@ -376,24 +376,30 @@ def _json_scalar(v: Any) -> Any:
 
 def _index_components_with_provider(
     registry: ProviderRegistry, index: str
-) -> tuple[list[str], DataProvider | None]:
-    """取首个成功 provider 的成分股,并返回该 provider(供调用方取成分名称)。"""
+) -> tuple[list[str], DataProvider | None, list[str]]:
+    """取首个成功 provider 的成分股,并返回该 provider 与各 provider 的失败原因。
+
+    返回 ``(symbols, provider, errors)``:``errors`` 形如 ``["akshare: akshare 未安装"]``,
+    供路由在全部失败时透出底层原因(而非笼统的「无 provider 提供指数」)。
+    """
+    errors: list[str] = []
     for p in registry.providers:
         try:
             comps = p.get_index_components(index)
         except NotImplementedError:
             continue
         except Exception as e:
+            errors.append(f"{p.name}: {e}")
             _log.warning("provider %s 取指数 %s 成分失败: %s", p.name, index, e)
             continue
         if comps:
-            return [str(s) for s in comps], p
-    return [], None
+            return [str(s) for s in comps], p, errors
+    return [], None, errors
 
 
 def _index_components(registry: ProviderRegistry, index: str) -> list[str]:
     """从首个支持指数成分的 provider 取成分股(全部失败返回 [])。"""
-    symbols, _ = _index_components_with_provider(registry, index)
+    symbols, _, _ = _index_components_with_provider(registry, index)
     return symbols
 
 
