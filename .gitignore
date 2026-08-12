@@ -153,3 +153,7 @@ temp/
 local_config.yaml
 secrets.yaml
 .env.local
+
+# Node / frontend
+node_modules/
+*.tsbuildinfo
