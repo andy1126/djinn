@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
 import { createBacktest, subscribeProgress } from '@/api/client'
+import ProfilePicker from '@/components/ProfilePicker'
 import { useConfigStore } from '@/store/configStore'
-import type { BacktestConfig, JobStatus } from '@/types'
+import type { BacktestConfig, JobStatus, Profile } from '@/types'
 
 const { RangePicker } = DatePicker
 
@@ -83,6 +84,16 @@ export default function BacktestRunPage() {
           >
             <Form.Item name="symbols" label="标的(逗号分隔)" rules={[{ required: true }]}>
               <Input placeholder="NVDA,AAPL" />
+            </Form.Item>
+            <Form.Item label="从 Profile 载入">
+              <ProfilePicker
+                onSelect={(p: Profile) =>
+                  form.setFieldsValue({
+                    symbols: p.symbols.join(','),
+                    ...(p.market ? { market: p.market } : {}),
+                  })
+                }
+              />
             </Form.Item>
             <Row gutter={8}>
               <Col span={8}>

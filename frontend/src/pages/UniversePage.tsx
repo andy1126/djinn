@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import {
   AutoComplete, Button, Card, Col, Descriptions, Empty, Input, Row, Segmented, Select, Space, Spin, Tag, Typography,
 } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
-import { getIndexComponents, getStockDetail, listIndexes, searchStocks } from '@/api/client'
-import type { IndexInfo, StockDetail as StockDetailT, SymbolSearchResult } from '@/types'
+import { getIndexComponents, getStockDetail, listIndexes, listProfiles, searchStocks } from '@/api/client'
+import type { IndexInfo, Profile, StockDetail as StockDetailT, SymbolSearchResult } from '@/types'
 
 const HISTORY_KEY = 'djinn:recent_stocks'
 const HISTORY_MAX = 10
@@ -75,7 +76,8 @@ function DetailCard({ detail, onSearch }: { detail: StockDetailT; onSearch: (s: 
  * 股票池:股票搜索(详情 + 历史) + 宽基指数成分 两个视图。
  */
 export default function UniversePage() {
-  const [tab, setTab] = useState<'search' | 'index'>('search')
+  const navigate = useNavigate()
+  const [tab, setTab] = useState<'search' | 'index' | 'profile'>('search')
   const [market, setMarket] = useState<string>('CN')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<SymbolSearchResult | null>(null)
@@ -98,6 +100,12 @@ export default function UniversePage() {
     queryKey: ['index-components', index],
     queryFn: () => getIndexComponents(index),
     enabled: tab === 'index',
+  })
+
+  const { data: profiles } = useQuery({
+    queryKey: ['profiles'],
+    queryFn: listProfiles,
+    enabled: tab === 'profile',
   })
 
   const { data: searchResp, isFetching: searching } = useQuery({
@@ -147,10 +155,11 @@ export default function UniversePage() {
       <Typography.Title level={3}>股票池</Typography.Title>
       <Segmented
         value={tab}
-        onChange={(v) => setTab(v as 'search' | 'index')}
+        onChange={(v) => setTab(v as 'search' | 'index' | 'profile')}
         options={[
           { label: '股票搜索', value: 'search' },
           { label: '指数成分', value: 'index' },
+          { label: 'Profile', value: 'profile' },
         ]}
       />
 
@@ -247,6 +256,37 @@ export default function UniversePage() {
                   </Col>
                 ))}
               </Row>
+            </Space>
+          )}
+        </Card>
+      )}
+
+      {tab === 'profile' && (
+        <Card
+          title="标的 Profile"
+          extra={<Button size="small" type="primary" onClick={() => navigate('/profiles')}>管理</Button>}
+        >
+          {(profiles || []).length === 0 ? (
+            <Empty description="暂无 Profile,点右上角「管理」创建" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <Space direction="vertical" size="large" style={{ width: '100%' }}>
+              {(profiles || []).map((p: Profile) => (
+                <Card key={p.profile_id} size="small" title={
+                  <Space>
+                    <span>{p.name}</span>
+                    {p.market && <Tag color="blue">{p.market}</Tag>}
+                    <Typography.Text type="secondary">{p.symbols.length} 个标的</Typography.Text>
+                  </Space>
+                }>
+                  <Row gutter={[8, 8]}>
+                    {p.symbols.map((s, i) => (
+                      <Col span={6} key={i}>
+                        <Typography.Text code>{s}</Typography.Text>
+                      </Col>
+                    ))}
+                  </Row>
+                </Card>
+              ))}
             </Space>
           )}
         </Card>

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Slider, Tag, Typography } from 'antd'
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import ProfilePicker from '@/components/ProfilePicker'
 import { useConfigStore } from '@/store/configStore'
+import type { Profile } from '@/types'
 
 export default function PortfolioConfigPage() {
   const navigate = useNavigate()
@@ -15,6 +17,11 @@ export default function PortfolioConfigPage() {
   const removeSymbol = (idx: number) => setSymbols(symbols.filter((_, i) => i !== idx))
   const updateSymbol = (idx: number, key: 'sym' | 'weight', v: string | number) =>
     setSymbols(symbols.map((s, i) => (i === idx ? { ...s, [key]: v } : s)))
+
+  const onLoadProfile = (p: Profile) => {
+    setSymbols(p.symbols.map((s) => ({ sym: s, weight: 1 / p.symbols.length })))
+    if (p.market) updateConfig('universe', { ...config.universe, market: p.market })
+  }
 
   const apply = () => {
     const syms = symbols.filter((s) => s.sym.trim()).map((s) => s.sym.trim())
@@ -32,6 +39,7 @@ export default function PortfolioConfigPage() {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="标的池与权重">
+        <ProfilePicker onSelect={onLoadProfile} />
         <Typography.Paragraph type="secondary">
           等权/市值加权时权重会自动计算;自定义权重需手动指定(总和应接近 1)。
         </Typography.Paragraph>
