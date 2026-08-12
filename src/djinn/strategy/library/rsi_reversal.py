@@ -4,21 +4,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+from djinn.indicators import rsi
 from djinn.strategy.base import Strategy, param
 from djinn.strategy.utils import state_from_signals
-
-
-def rsi(close: pd.Series, period: int) -> pd.Series:
-    """计算 RSI(Wilder 平滑)。"""
-    delta = close.diff()
-    gain = delta.clip(lower=0.0)
-    loss = -delta.clip(upper=0.0)
-    # Wilder 平滑:首个 period 用简单平均,后续用指数加权递推
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
-    out = 100 - 100 / (1 + rs)
-    return out.fillna(50.0)
 
 
 class RSIReversal(Strategy):

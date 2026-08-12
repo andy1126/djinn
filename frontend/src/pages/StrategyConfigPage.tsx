@@ -1,11 +1,14 @@
 import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Card, Descriptions, Select, Space, Typography } from 'antd'
+import { Button, Card, Descriptions, Select, Space, Typography } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { useConfigStore } from '@/store/configStore'
 import { listStrategies } from '@/api/client'
 import StrategyParamForm from '@/components/StrategyParamForm'
 
 export default function StrategyConfigPage() {
+  const navigate = useNavigate()
   const { config, updateConfig } = useConfigStore()
   const { data: stratResp } = useQuery({
     queryKey: ['strategies'],
@@ -26,7 +29,7 @@ export default function StrategyConfigPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card title="选择策略">
+      <Card title="选择策略" extra={<Button icon={<PlusOutlined />} onClick={() => navigate('/strategies/editor')}>自定义策略</Button>}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Select
             value={config.strategy.name}
