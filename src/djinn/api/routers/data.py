@@ -1,8 +1,10 @@
 """数据路由:拉取/缓存/基准。"""
 
-from datetime import date
+import math
+from datetime import date, datetime
 from typing import Any
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
 from djinn.api.deps import get_cache
@@ -60,3 +62,60 @@ async def clear_cache(cache: DataCache = Depends(get_cache)) -> dict[str, str]:
     """清空缓存。"""
     cache.clear()
     return {"status": "cleared"}
+
+
+def _safe_scalar(v: Any) -> Any:
+    """把缓存单元格转成 JSON 友好值(NaN/Inf/NaT → None,时间 → ISO 字符串)。"""
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, pd.Timestamp):
+        return v.date().isoformat()
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    if isinstance(v, (bool, int, float)):
+        return v
+    return str(v)
+
+
+def _preview(
+    df: pd.DataFrame, file: str, head: int = 5, tail: int = 5
+) -> dict[str, Any]:
+    """缓存文件结构 + 首尾内容预览(JSON 友好,index 并入每行)。"""
+    is_dt = isinstance(df.index, pd.DatetimeIndex)
+
+    def _rows(sub: pd.DataFrame) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for idx_val, row in sub.iterrows():
+            key = str(idx_val)
+            if is_dt:
+                key = key[:10]  # Timestamp 的 str 为 ISO 格式,取前 10 位即日期
+            d: dict[str, Any] = {"_index": key}
+            for col in sub.columns:
+                d[str(col)] = _safe_scalar(row[col])
+            out.append(d)
+        return out
+
+    return {
+        "file": file,
+        "rows": len(df),
+        "index_type": "datetime" if is_dt else str(df.index.dtype),
+        "columns": [{"name": str(c), "dtype": str(df[c].dtype)} for c in df.columns],
+        "head": _rows(df.head(head)),
+        "tail": _rows(df.tail(tail)),
+    }
+
+
+@router.get("/cache/content")
+async def cache_content(
+    file: str, cache: DataCache = Depends(get_cache)
+) -> dict[str, Any]:
+    """查看缓存文件的字段(列名/类型)与内容预览(首尾各 5 行)。"""
+    df = cache.inspect(file)
+    if df is None:
+        raise HTTPException(status_code=404, detail=f"缓存文件 {file} 不存在")
+    return _preview(df, file)

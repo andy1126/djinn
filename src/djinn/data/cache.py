@@ -193,6 +193,17 @@ class DataCache:
                 out.append({"file": p.name, "rows": -1, "error": True})
         return out
 
+    def inspect(self, file: str) -> pd.DataFrame | None:
+        """按文件名读取缓存文件(仅允许文件名,防路径穿越);不存在 / 读取失败返回 None。"""
+        p = self.cache_dir / file
+        if p.parent != self.cache_dir or not p.is_file():
+            return None
+        try:
+            return pd.read_parquet(p)
+        except Exception as e:
+            _log.warning("缓存读取失败 %s: %s", p, e)
+            return None
+
 
 def env_cache_dir() -> str:
     """从 env 读取缓存目录(默认 ``.cache/djinn``)。"""

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, DatePicker, Form, Input, Select, Space, Table, message } from 'antd'
+import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
-import { fetchData, listCache, clearCache } from '@/api/client'
-import type { CacheEntry } from '@/types'
+import { fetchData, listCache, clearCache, getCacheContent } from '@/api/client'
+import ProfilePicker from '@/components/ProfilePicker'
+import type { CacheEntry, Profile } from '@/types'
 
 const { RangePicker } = DatePicker
 
@@ -11,10 +12,17 @@ export default function DataManagerPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm()
   const [symbols, setSymbols] = useState<string[]>(['NVDA'])
+  const [selectedFile, setSelectedFile] = useState<string | null>(null)
 
   const { data: cache } = useQuery({
     queryKey: ['cache'],
     queryFn: listCache,
+  })
+
+  const { data: content } = useQuery({
+    queryKey: ['cache-content', selectedFile],
+    queryFn: () => getCacheContent(selectedFile!),
+    enabled: !!selectedFile,
   })
 
   const fetchMut = useMutation({
@@ -46,11 +54,34 @@ export default function DataManagerPage() {
   }
 
   const cacheColumns = [
-    { title: '文件', dataIndex: 'file', key: 'file' },
+    { title: '文件', dataIndex: 'file', key: 'file', ellipsis: true },
     { title: '行数', dataIndex: 'rows', key: 'rows' },
     { title: '起始', dataIndex: 'start', key: 'start' },
     { title: '结束', dataIndex: 'end', key: 'end' },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: unknown, r: CacheEntry) => (
+        <Button size="small" onClick={() => setSelectedFile(r.file)} disabled={r.rows < 0}>
+          查看
+        </Button>
+      ),
+    },
   ]
+
+  const previewColumns = content
+    ? [
+        { title: '日期/索引', dataIndex: '_index', key: '_index', fixed: 'left' as const, width: 120 },
+        ...content.columns.map((c) => ({
+          title: c.name,
+          dataIndex: c.name,
+          key: c.name,
+          render: (v: unknown) => (v == null ? '—' : String(v)),
+        })),
+      ]
+    : []
+
+  const omittedRows = content ? Math.max(0, content.rows - content.head.length - content.tail.length) : 0
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -68,6 +99,16 @@ export default function DataManagerPage() {
         >
           <Form.Item name="symbols" label="标的(逗号分隔)">
             <Input placeholder="NVDA,AAPL" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item label="从 Profile 载入">
+            <ProfilePicker
+              onSelect={(p: Profile) =>
+                form.setFieldsValue({
+                  symbols: p.symbols.join(','),
+                  ...(p.market ? { market: p.market } : {}),
+                })
+              }
+            />
           </Form.Item>
           <Form.Item name="market" label="市场">
             <Select style={{ width: 100 }} options={[
@@ -104,6 +145,64 @@ export default function DataManagerPage() {
           pagination={false}
         />
       </Card>
+
+      <Modal
+        title="缓存文件内容"
+        open={!!selectedFile}
+        onCancel={() => setSelectedFile(null)}
+        footer={null}
+        width={960}
+      >
+        {content && (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <div>
+              <Typography.Text code>{content.file}</Typography.Text>
+              <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                {content.rows} 行 · 索引类型 {content.index_type}
+              </Typography.Text>
+            </div>
+
+            <div>
+              <Typography.Text type="secondary">字段</Typography.Text>
+              <div style={{ marginTop: 4 }}>
+                <Space wrap>
+                  {content.columns.map((c) => (
+                    <Tag key={c.name} color="blue">
+                      {c.name}<span style={{ opacity: 0.65 }}> : {c.dtype}</span>
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            </div>
+
+            <Typography.Text type="secondary">前 {content.head.length} 行</Typography.Text>
+            <Table
+              columns={previewColumns}
+              dataSource={content.head}
+              rowKey={(_, i) => String(i)}
+              size="small"
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+            />
+
+            {omittedRows > 0 && (
+              <Typography.Text type="secondary" style={{ display: 'block', textAlign: 'center' }}>
+                ⋯ 中间省略 {omittedRows} 行 ⋯
+              </Typography.Text>
+            )}
+
+            <Typography.Text type="secondary">后 {content.tail.length} 行</Typography.Text>
+            <Table
+              columns={previewColumns}
+              dataSource={content.tail}
+              rowKey={(_, i) => String(i)}
+              size="small"
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+            />
+          </Space>
+        )}
+      </Modal>
     </Space>
   )
 }
