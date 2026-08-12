@@ -14,6 +14,8 @@ from djinn.api.routers import (
     backtests,
     data,
     factors,
+    indicators,
+    profiles,
     screens,
     stocks,
     strategies,
@@ -70,6 +72,8 @@ app.include_router(factors.analysis_router)
 app.include_router(factors.matrix_router)
 app.include_router(screens.router)
 app.include_router(stocks.router)
+app.include_router(profiles.router)
+app.include_router(indicators.router)
 
 
 @app.get("/", tags=["health"])

@@ -3,6 +3,7 @@ import LayoutShell from './components/LayoutShell'
 import DashboardPage from './pages/DashboardPage'
 import DataManagerPage from './pages/DataManagerPage'
 import StrategyConfigPage from './pages/StrategyConfigPage'
+import StrategyEditorPage from './pages/StrategyEditorPage'
 import PortfolioConfigPage from './pages/PortfolioConfigPage'
 import BacktestRunPage from './pages/BacktestRunPage'
 import ResultReportPage from './pages/ResultReportPage'
@@ -13,6 +14,8 @@ import UniversePage from './pages/UniversePage'
 import FactorAnalysisPage from './pages/FactorAnalysisPage'
 import FactorMatrixPage from './pages/FactorMatrixPage'
 import ScreenerPage from './pages/ScreenerPage'
+import ProfilesPage from './pages/ProfilesPage'
+import IndicatorLibraryPage from './pages/IndicatorLibraryPage'
 
 export const router = createBrowserRouter([
   {
@@ -22,10 +25,13 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'data', element: <DataManagerPage /> },
       { path: 'universe', element: <UniversePage /> },
+      { path: 'profiles', element: <ProfilesPage /> },
       { path: 'factors', element: <FactorAnalysisPage /> },
+      { path: 'indicators', element: <IndicatorLibraryPage /> },
       { path: 'factor-matrix', element: <FactorMatrixPage /> },
       { path: 'screener', element: <ScreenerPage /> },
       { path: 'strategies', element: <StrategyConfigPage /> },
+      { path: 'strategies/editor', element: <StrategyEditorPage /> },
       { path: 'portfolio', element: <PortfolioConfigPage /> },
       { path: 'backtest', element: <BacktestRunPage /> },
       { path: 'results', element: <ResultReportPage /> },

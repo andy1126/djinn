@@ -33,6 +33,7 @@ dependencies = [
     "seaborn>=0.13",
     "plotly>=5.20",
     "joblib>=1.4",
+    "pynescript>=0.3.0",
     "click>=8.1", # typer runtime
 ]
 
@@ -133,6 +134,10 @@ module = [
     "uvicorn.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pynescript.*"]
+follow_imports = "skip"
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

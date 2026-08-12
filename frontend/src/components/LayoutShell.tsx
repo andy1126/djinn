@@ -14,6 +14,9 @@ import {
   SwapOutlined,
   FundOutlined,
   FilterOutlined,
+  ProfileOutlined,
+  EditOutlined,
+  LineChartOutlined,
 } from '@ant-design/icons'
 
 const { Header, Sider, Content } = Layout
@@ -28,10 +31,13 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
   { key: '/data', icon: <DatabaseOutlined />, label: '数据管理' },
   { key: '/universe', icon: <FundOutlined />, label: '股票池' },
+  { key: '/profiles', icon: <ProfileOutlined />, label: '标的组合' },
   { key: '/factors', icon: <ExperimentOutlined />, label: '因子分析' },
+  { key: '/indicators', icon: <LineChartOutlined />, label: '指标库' },
   { key: '/factor-matrix', icon: <ExperimentOutlined />, label: '多因子诊断' },
   { key: '/screener', icon: <FilterOutlined />, label: '选股' },
   { key: '/strategies', icon: <BarChartOutlined />, label: '策略配置' },
+  { key: '/strategies/editor', icon: <EditOutlined />, label: '策略编辑器' },
   { key: '/portfolio', icon: <AppstoreOutlined />, label: '组合配置' },
   { key: '/backtest', icon: <ThunderboltOutlined />, label: '运行回测' },
   { key: '/results', icon: <BarChartOutlined />, label: '结果报告' },

@@ -23,6 +23,85 @@ export interface StrategyListResponse {
   strategies: StrategyInfo[]
 }
 
+export interface UserStrategy {
+  strategy_id: string
+  name: string
+  kind: string
+  source_code: string
+  description: string
+  created_at: string
+  updated_at: string
+  params: ParamSchema[]
+}
+
+export interface UserStrategyCreate {
+  name: string
+  source_code: string
+  kind: string
+  description?: string
+}
+
+export interface UserStrategyUpdate {
+  name?: string
+  source_code?: string
+  kind?: string
+  description?: string
+}
+
+export interface UserStrategyValidateResponse {
+  valid: boolean
+  error: string | null
+  params: ParamSchema[]
+}
+
+export interface IndicatorParam {
+  name: string
+  default: number | string | boolean | null
+}
+
+export interface IndicatorInfo {
+  name: string
+  category: string
+  description: string
+  doc: string
+  signature: string
+  params: IndicatorParam[]
+  source: string
+  origin: 'builtin' | 'user'
+}
+
+export interface IndicatorListResponse {
+  indicators: IndicatorInfo[]
+}
+
+export interface UserIndicator {
+  indicator_id: string
+  name: string
+  source_code: string
+  description: string
+  created_at: string
+  updated_at: string
+  signature: string
+}
+
+export interface UserIndicatorCreate {
+  name: string
+  source_code: string
+  description?: string
+}
+
+export interface UserIndicatorUpdate {
+  name?: string
+  source_code?: string
+  description?: string
+}
+
+export interface UserIndicatorValidateResponse {
+  valid: boolean
+  error: string | null
+  signature: string
+}
+
 export interface JobCreated {
   job_id: string
   status: string
@@ -178,6 +257,20 @@ export interface CacheEntry {
 
 export interface CacheResponse {
   entries: CacheEntry[]
+}
+
+export interface CacheColumn {
+  name: string
+  dtype: string
+}
+
+export interface CacheContent {
+  file: string
+  rows: number
+  index_type: string
+  columns: CacheColumn[]
+  head: Record<string, string | number | boolean | null>[]
+  tail: Record<string, string | number | boolean | null>[]
 }
 
 // 回测报告(完整)
@@ -378,6 +471,28 @@ export interface IndustryCount {
 
 export interface IndustryListResponse {
   industries: IndustryCount[]
+}
+
+// ── 标的 profile ───────────────────────────────────────
+export interface Profile {
+  profile_id: string
+  name: string
+  symbols: string[]
+  market?: Market | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProfileCreate {
+  name: string
+  symbols: string[]
+  market?: Market | null
+}
+
+export interface ProfileUpdate {
+  name?: string
+  symbols?: string[]
+  market?: Market | null
 }
 
 // ── 股票搜索 / 详情 ─────────────────────────────────────

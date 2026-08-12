@@ -69,6 +69,88 @@ class StrategyListResponse(BaseModel):
     strategies: list[StrategyInfo]
 
 
+class UserStrategyCreate(BaseModel):
+    """创建用户自定义策略。"""
+
+    name: str
+    source_code: str
+    kind: str = "python"  # "python" / "pine"
+    description: str = ""
+
+
+class UserStrategyUpdate(BaseModel):
+    """更新用户策略;字段 None 表示不更新。"""
+
+    name: str | None = None
+    source_code: str | None = None
+    kind: str | None = None
+    description: str | None = None
+
+
+class UserStrategyResponse(BaseModel):
+    strategy_id: str
+    name: str
+    kind: str
+    source_code: str
+    description: str = ""
+    created_at: str
+    updated_at: str
+    params: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class UserStrategyValidateResponse(BaseModel):
+    """仅编译校验(不落库)的返回。"""
+
+    valid: bool
+    error: str | None = None
+    params: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class IndicatorInfo(BaseModel):
+    """指标元数据(内置 + 用户自定义)。"""
+
+    name: str
+    category: str = "其他"
+    description: str = ""
+    doc: str = ""
+    signature: str = ""
+    params: list[dict[str, Any]] = Field(default_factory=list)
+    source: str = ""
+    origin: str = "builtin"  # "builtin" / "user"
+
+
+class IndicatorListResponse(BaseModel):
+    indicators: list[IndicatorInfo]
+
+
+class UserIndicatorCreate(BaseModel):
+    name: str
+    source_code: str
+    description: str = ""
+
+
+class UserIndicatorUpdate(BaseModel):
+    name: str | None = None
+    source_code: str | None = None
+    description: str | None = None
+
+
+class UserIndicatorResponse(BaseModel):
+    indicator_id: str
+    name: str
+    source_code: str
+    description: str = ""
+    created_at: str
+    updated_at: str
+    signature: str = ""
+
+
+class UserIndicatorValidateResponse(BaseModel):
+    valid: bool
+    error: str | None = None
+    signature: str = ""
+
+
 class MetricsResponse(BaseModel):
     metrics: dict[str, Any]
     trade_stats: dict[str, Any]
@@ -180,6 +262,32 @@ class IndustryCount(BaseModel):
 
 class IndustryListResponse(BaseModel):
     industries: list[IndustryCount]
+
+
+# ── 标的 profile ────────────────────────────────────────
+class ProfileCreate(BaseModel):
+    """创建 profile:命名标的列表(市场可选)。"""
+
+    name: str
+    symbols: list[str]
+    market: str | None = None
+
+
+class ProfileUpdate(BaseModel):
+    """更新 profile;字段传 None 表示不更新。"""
+
+    name: str | None = None
+    symbols: list[str] | None = None
+    market: str | None = None
+
+
+class ProfileResponse(BaseModel):
+    profile_id: str
+    name: str
+    symbols: list[str]
+    market: str | None = None
+    created_at: str
+    updated_at: str
 
 
 # ── 因子库 / 因子分析 ───────────────────────────────────

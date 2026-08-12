@@ -7,13 +7,21 @@ from functools import lru_cache
 from fastapi import Depends
 
 from djinn.api.jobs import JobRegistry
+from djinn.api.profiles import ProfileRegistry
 from djinn.data import DataCache, default_registry
 from djinn.data.provider import ProviderRegistry
+from djinn.indicators.store import get_indicator_store as get_indicator_store
+from djinn.strategy.store import get_strategy_store as get_strategy_store
 
 
 @lru_cache(maxsize=1)
 def get_job_registry() -> JobRegistry:
     return JobRegistry()
+
+
+@lru_cache(maxsize=1)
+def get_profile_registry() -> ProfileRegistry:
+    return ProfileRegistry()
 
 
 @lru_cache(maxsize=1)

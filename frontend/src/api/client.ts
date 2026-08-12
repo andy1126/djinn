@@ -2,6 +2,7 @@ import axios from 'axios'
 import type {
   BacktestRequest,
   BacktestReport,
+  CacheContent,
   CacheResponse,
   DataFetchRequest,
   FactorAnalysisRequest,
@@ -12,14 +13,27 @@ import type {
   FactorReport,
   IndexComponentsResponse,
   IndexListResponse,
+  IndicatorInfo,
+  IndicatorListResponse,
   IndustryListResponse,
   JobCreated,
   JobStatus,
+  Profile,
+  ProfileCreate,
+  ProfileUpdate,
   ScreenRequest,
   StockDetail,
   StrategyListResponse,
   StrategyInfo,
   SweepRequest,
+  UserIndicator,
+  UserIndicatorCreate,
+  UserIndicatorUpdate,
+  UserIndicatorValidateResponse,
+  UserStrategy,
+  UserStrategyCreate,
+  UserStrategyUpdate,
+  UserStrategyValidateResponse,
   SymbolSearchResponse,
   UniverseStockListResponse,
 } from '@/types'
@@ -36,6 +50,55 @@ export const listStrategies = async (): Promise<StrategyListResponse> =>
 
 export const getStrategy = async (name: string): Promise<StrategyInfo> =>
   (await http.get(`/strategies/${name}`)).data
+
+export const listUserStrategies = async (): Promise<UserStrategy[]> =>
+  (await http.get('/strategies/user')).data
+
+export const createUserStrategy = async (
+  req: UserStrategyCreate,
+): Promise<UserStrategy> => (await http.post('/strategies/user', req)).data
+
+export const updateUserStrategy = async (
+  id: string,
+  req: UserStrategyUpdate,
+): Promise<UserStrategy> => (await http.put(`/strategies/user/${id}`, req)).data
+
+export const deleteUserStrategy = async (id: string): Promise<void> => {
+  await http.delete(`/strategies/user/${id}`)
+}
+
+export const validateUserStrategy = async (
+  req: UserStrategyCreate,
+): Promise<UserStrategyValidateResponse> =>
+  (await http.post('/strategies/user/validate', req)).data
+
+// ── 指标库 ─────────────────────────────────────────────
+export const listIndicators = async (): Promise<IndicatorListResponse> =>
+  (await http.get('/indicators')).data
+
+export const getIndicator = async (name: string): Promise<IndicatorInfo> =>
+  (await http.get(`/indicators/${name}`)).data
+
+export const listUserIndicators = async (): Promise<UserIndicator[]> =>
+  (await http.get('/indicators/user')).data
+
+export const createUserIndicator = async (
+  req: UserIndicatorCreate,
+): Promise<UserIndicator> => (await http.post('/indicators/user', req)).data
+
+export const updateUserIndicator = async (
+  id: string,
+  req: UserIndicatorUpdate,
+): Promise<UserIndicator> => (await http.put(`/indicators/user/${id}`, req)).data
+
+export const deleteUserIndicator = async (id: string): Promise<void> => {
+  await http.delete(`/indicators/user/${id}`)
+}
+
+export const validateUserIndicator = async (
+  req: UserIndicatorCreate,
+): Promise<UserIndicatorValidateResponse> =>
+  (await http.post('/indicators/user/validate', req)).data
 
 // ── 回测 ─────────────────────────────────────────────
 export const createBacktest = async (req: BacktestRequest): Promise<JobCreated> =>
@@ -79,6 +142,9 @@ export const listCache = async (): Promise<CacheResponse> =>
 
 export const clearCache = async (): Promise<{ status: string }> =>
   (await http.delete('/data/cache')).data
+
+export const getCacheContent = async (file: string): Promise<CacheContent> =>
+  (await http.get('/data/cache/content', { params: { file } })).data
 
 // ── 健康检查 ─────────────────────────────────────────
 export const healthCheck = async (): Promise<{ status: string }> =>
@@ -159,6 +225,22 @@ export const getStockDetail = async (
   market?: string,
 ): Promise<StockDetail> =>
   (await http.get(`/stocks/${symbol}`, { params: { market } })).data
+
+// ── 标的 profile ───────────────────────────────────────
+export const listProfiles = async (): Promise<Profile[]> =>
+  (await http.get('/profiles')).data
+
+export const createProfile = async (req: ProfileCreate): Promise<Profile> =>
+  (await http.post('/profiles', req)).data
+
+export const updateProfile = async (
+  id: string,
+  req: ProfileUpdate,
+): Promise<Profile> => (await http.put(`/profiles/${id}`, req)).data
+
+export const deleteProfile = async (id: string): Promise<void> => {
+  await http.delete(`/profiles/${id}`)
+}
 
 // ── WebSocket 进度 ───────────────────────────────────
 export const subscribeProgress = (
