@@ -33,6 +33,10 @@ class Metrics:
     n_days: int = 0
     cagr: float = 0.0
     volatility: float = 0.0  # 日波动率
+    var_95: float = 0.0  # 95% VaR(日损失,正)
+    cvar_95: float = 0.0  # 95% CVaR(日期望损失,正)
+    max_drawdown_duration: int = 0  # 最长水下期(天)
+    max_losing_streak: int = 0  # 最长连续亏损(天)
     extra: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, float | int]:
@@ -50,6 +54,10 @@ class Metrics:
             "n_trades": self.n_trades,
             "n_days": self.n_days,
             "cagr": self.cagr,
+            "var_95": self.var_95,
+            "cvar_95": self.cvar_95,
+            "max_drawdown_duration": self.max_drawdown_duration,
+            "max_losing_streak": self.max_losing_streak,
         }
         d.update(self.extra)
         return d
@@ -69,6 +77,30 @@ def compute_max_drawdown(equity: pd.Series) -> tuple[float, pd.Series]:
     dd = (equity - running_max) / running_max
     mdd = float(dd.min())
     return mdd, dd
+
+
+def _max_underwater_days(dd: pd.Series) -> int:
+    """最长连续回撤 < 0 的天数(水下期)。"""
+    underwater = (dd < 0).to_numpy()
+    if not underwater.any():
+        return 0
+    best = cur = 0
+    for v in underwater:
+        cur = cur + 1 if v else 0
+        best = max(best, cur)
+    return best
+
+
+def _max_losing_streak(rets: pd.Series) -> int:
+    """最长连续负收益天数。"""
+    neg = (rets < 0).to_numpy()
+    if not neg.any():
+        return 0
+    best = cur = 0
+    for v in neg:
+        cur = cur + 1 if v else 0
+        best = max(best, cur)
+    return best
 
 
 def compute_metrics(
@@ -110,8 +142,15 @@ def compute_metrics(
     sortino = (
         float(excess.mean() / downside_vol * np.sqrt(af)) if downside_vol > 0 else 0.0
     )
-    mdd, _ = compute_max_drawdown(equity)
+    mdd, dd = compute_max_drawdown(equity)
     calmar = float(ann_return / abs(mdd)) if mdd < 0 else 0.0
+
+    # 尾部风险 / 回撤时长 / 连亏
+    var_95 = float(-rets.quantile(0.05))
+    tail = rets[rets <= rets.quantile(0.05)]
+    cvar_95 = float(-tail.mean()) if len(tail) > 0 else 0.0
+    max_dd_duration = _max_underwater_days(dd)
+    max_losing = _max_losing_streak(rets)
 
     # 胜率 / 盈亏比
     pnls = (
@@ -137,6 +176,10 @@ def compute_metrics(
         n_days=len(equity),
         cagr=cagr,
         volatility=daily_vol,
+        var_95=var_95,
+        cvar_95=cvar_95,
+        max_drawdown_duration=max_dd_duration,
+        max_losing_streak=max_losing,
     )
 
 

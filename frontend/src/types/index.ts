@@ -300,6 +300,10 @@ export interface Metrics {
   turnover: number
   n_trades: number
   n_days: number
+  var_95?: number
+  cvar_95?: number
+  max_drawdown_duration?: number
+  max_losing_streak?: number
   extra?: Record<string, number>
   [key: string]: number | Record<string, number> | undefined
 }
@@ -313,6 +317,7 @@ export interface BenchmarkStats {
   benchmark_return?: number
   strategy_return?: number
   excess_return?: number
+  downside_capture?: number
   [key: string]: number | undefined
 }
 

@@ -99,6 +99,7 @@ class BenchmarkStats:
     benchmark_return: float = 0.0
     strategy_return: float = 0.0
     excess_return: float = 0.0
+    downside_capture: float = 0.0  # 下行捕获(基准下跌期的策略/基准收益比)
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -110,6 +111,7 @@ class BenchmarkStats:
             "benchmark_return": self.benchmark_return,
             "strategy_return": self.strategy_return,
             "excess_return": self.excess_return,
+            "downside_capture": self.downside_capture,
         }
 
 
@@ -158,6 +160,12 @@ def compare_benchmark(
         if n_years > 0
         else 0.0
     )
+    down_mask = br < 0
+    down_capture = (
+        float(sr[down_mask].sum() / br[down_mask].sum())
+        if down_mask.any() and br[down_mask].sum() != 0
+        else 0.0
+    )
     return BenchmarkStats(
         alpha=alpha,
         beta=beta,
@@ -167,4 +175,5 @@ def compare_benchmark(
         benchmark_return=bench_ret,
         strategy_return=strat_ret,
         excess_return=strat_ret - bench_ret,
+        downside_capture=down_capture,
     )
