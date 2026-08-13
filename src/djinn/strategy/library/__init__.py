@@ -19,6 +19,7 @@ from djinn.strategy.library.rsi_reversal import RSIReversal
 from djinn.strategy.library.stochastic import StochasticCross
 from djinn.strategy.library.supertrend import Supertrend
 from djinn.strategy.library.turtle_atr import TurtleATR
+from djinn.strategy.library.vol_target import VolTarget
 from djinn.strategy.store import StrategyStore, get_strategy_store
 from djinn.strategy.user import compile_user_strategy
 
@@ -38,6 +39,7 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "TurtleATR": TurtleATR,
     "Grid": Grid,
     "PairsSpread": PairsSpread,
+    "VolTarget": VolTarget,
     "FactorPortfolio": FactorPortfolioStrategy,
 }
 
@@ -73,6 +75,7 @@ __all__ = [
     "StochasticCross",
     "Supertrend",
     "TurtleATR",
+    "VolTarget",
     "get_strategy_class",
     "rsi",
 ]

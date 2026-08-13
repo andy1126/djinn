@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
 import { createBacktest, listStrategies, subscribeProgress } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import StrategyParamForm from '@/components/StrategyParamForm'
 import { useConfigStore } from '@/store/configStore'
 import type { BacktestConfig, JobStatus, Profile, StrategyInfo } from '@/types'
+
+const ALLOC_LABEL: Record<string, string> = {
+  equal: '等权', market_cap: '市值加权', custom: '自定义', score: '打分',
+  risk_parity: '风险平价', min_variance: '最小方差', mean_variance: '均值方差',
+}
+const REBALANCE_LABEL: Record<string, string> = {
+  none: '不调仓', daily: '每日', weekly: '每周', monthly: '每月', quarterly: '每季度', yearly: '每年',
+}
+const COMMISSION_LABEL: Record<string, string> = {
+  default: '市场默认', china: 'A股', us: '美股', hk: '港股',
+}
 
 const { RangePicker } = DatePicker
 
@@ -168,6 +179,19 @@ export default function BacktestRunPage() {
             )}
             <Button size="small" onClick={() => navigate('/strategies')}>配置策略(编辑代码)</Button>
           </Space>
+        </Card>
+
+        <Card title="当前组合配置" size="small" style={{ marginTop: 16 }}>
+          <Descriptions size="small" column={2} bordered>
+            <Descriptions.Item label="组合模式">{config.portfolio.mode === 'portfolio' ? '组合' : '单标的'}</Descriptions.Item>
+            <Descriptions.Item label="分配方式">{ALLOC_LABEL[config.portfolio.allocation] || config.portfolio.allocation}</Descriptions.Item>
+            <Descriptions.Item label="再平衡">{REBALANCE_LABEL[config.portfolio.rebalance.period] || config.portfolio.rebalance.period}</Descriptions.Item>
+            <Descriptions.Item label="偏离阈值">{(config.portfolio.rebalance.threshold * 100).toFixed(0)}%</Descriptions.Item>
+            <Descriptions.Item label="单标的最大权重">{(config.risk.max_single_weight * 100).toFixed(0)}%</Descriptions.Item>
+            <Descriptions.Item label="总仓位上限">{(config.risk.max_total_position * 100).toFixed(0)}%</Descriptions.Item>
+            <Descriptions.Item label="佣金">{COMMISSION_LABEL[config.costs.commission.type] || config.costs.commission.type}</Descriptions.Item>
+            <Descriptions.Item label="滑点">{config.costs.slippage.bps ?? 0} bps</Descriptions.Item>
+          </Descriptions>
         </Card>
       </Col>
 

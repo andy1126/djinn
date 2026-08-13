@@ -30,6 +30,7 @@ from djinn.strategy.library import (
     StochasticCross,
     Supertrend,
     TurtleATR,
+    VolTarget,
     get_strategy_class,
 )
 from djinn.strategy.parameter import Parameter, ParamSchema, get_params, param_schema
@@ -67,6 +68,7 @@ __all__ = [
     "TurtleATR",
     "Grid",
     "PairsSpread",
+    "VolTarget",
     "STRATEGY_REGISTRY",
     "get_strategy_class",
 ]

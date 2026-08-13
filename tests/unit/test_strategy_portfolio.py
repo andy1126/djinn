@@ -15,6 +15,7 @@ from djinn.strategy import (
     Grid,
     PairsSpread,
     TurtleATR,
+    VolTarget,
     get_strategy_class,
     param_schema,
 )
@@ -84,6 +85,7 @@ def test_new_strategies_in_registry():
         ("TurtleATR", TurtleATR),
         ("Grid", Grid),
         ("PairsSpread", PairsSpread),
+        ("VolTarget", VolTarget),
     ):
         assert get_strategy_class(name) is cls
 
@@ -146,6 +148,14 @@ def test_grid_accumulates_on_dip():
     )
     # 首根基准 100,末价 90 → 下跌 10% → 2 档 → 目标权重 0.2
     assert ("A", 0.2) in orders
+
+
+def test_vol_target_equal_weight_when_no_vol():
+    frames = {"A": _frame(np.full(30, 100.0)), "B": _frame(np.full(30, 100.0))}
+    orders = _run_bars(VolTarget(rebalance_freq=10), frames)
+    # 净值恒定 → 已实现波动率为 0 → 满仓等权
+    assert ("A", 0.5) in orders
+    assert ("B", 0.5) in orders
 
 
 def test_pairs_spread_orders_one_side():
