@@ -17,18 +17,28 @@ __all__ = [
     "ema",
     "wma",
     "rma",
+    "vwma",
+    "hma",
     "rsi",
     "macd",
     "stoch",
     "cci",
     "obv",
+    "mfi",
+    "wpr",
+    "dmi",
+    "aroon",
+    "supertrend",
+    "psar",
     "atr",
+    "tr",
     "bb",
     "stdev",
     "variance",
     "highest",
     "lowest",
     "donchian",
+    "kc",
     "change",
     "roc",
     "momentum",
@@ -36,6 +46,8 @@ __all__ = [
     "cross_under",
     "valuewhen",
     "barssince",
+    "rising",
+    "falling",
 ]
 
 
@@ -70,6 +82,22 @@ def wma(s: pd.Series, n: int | float) -> pd.Series:
         lambda x: float(np.dot(x, weights[-len(x) :]) / weights[-len(x) :].sum()),
         raw=True,
     )
+
+
+def vwma(close: pd.Series, volume: pd.Series, n: int | float) -> pd.Series:
+    """成交量加权移动平均 VWMA。"""
+    n = _n(n)
+    pv = (close * volume).rolling(n, min_periods=n).sum()
+    v = volume.rolling(n, min_periods=n).sum()
+    return pv / v.replace(0, np.nan)
+
+
+def hma(close: pd.Series, n: int | float) -> pd.Series:
+    """Hull 移动平均(WMA 组合,更平滑低滞后)。"""
+    n = _n(n)
+    half = max(1, n // 2)
+    sqrt_n = max(1, round(n**0.5))
+    return wma(2 * wma(close, half) - wma(close, n), sqrt_n)
 
 
 # ── 振荡器 ──────────────────────────────────────────────
@@ -144,17 +172,203 @@ def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume).cumsum()
 
 
+def mfi(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    n: int | float = 14,
+) -> pd.Series:
+    """资金流量指标 MFI(典型价 × 成交量,0~100)。"""
+    n = _n(n)
+    tp = (high + low + close) / 3
+    mf = tp * volume
+    pos = mf.where(tp > tp.shift(1), 0.0)
+    neg = mf.where(tp < tp.shift(1), 0.0)
+    pos_sum = pos.rolling(n, min_periods=n).sum()
+    neg_sum = neg.rolling(n, min_periods=n).sum()
+    ratio = pos_sum / neg_sum.replace(0, np.nan)
+    return 100 - 100 / (1 + ratio)
+
+
+def wpr(
+    high: pd.Series, low: pd.Series, close: pd.Series, n: int | float = 14
+) -> pd.Series:
+    """威廉指标 Williams %R(-100~0,-80 以下超卖,-20 以上超买)。"""
+    n = _n(n)
+    hh = highest(high, n)
+    ll = lowest(low, n)
+    return -100 * (hh - close) / (hh - ll).replace(0, np.nan)
+
+
+# ── 趋势强度 ────────────────────────────────────────────
+def dmi(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    di_length: int | float = 14,
+    adx_smoothing: int | float = 14,
+) -> pd.DataFrame:
+    """方向指标 DMI,返回 ``{plus_di, minus_di, adx}``(Wilder 平滑)。"""
+    di_length = _n(di_length)
+    adx_smoothing = _n(adx_smoothing)
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = pd.Series(
+        np.where((up > down) & (up > 0), up, 0.0), index=high.index, dtype="float64"
+    )
+    minus_dm = pd.Series(
+        np.where((down > up) & (down > 0), down, 0.0), index=high.index, dtype="float64"
+    )
+    atr_ = rma(tr(high, low, close), di_length)
+    plus_di = 100 * rma(plus_dm, di_length) / atr_.replace(0, np.nan)
+    minus_di = 100 * rma(minus_dm, di_length) / atr_.replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    adx = rma(dx, adx_smoothing)
+    return pd.DataFrame({"plus_di": plus_di, "minus_di": minus_di, "adx": adx})
+
+
+def aroon(high: pd.Series, low: pd.Series, n: int | float = 14) -> pd.DataFrame:
+    """阿隆指标,返回 ``{aroon_up, aroon_down}``(0~100,100=近期新高/新低)。"""
+    n = _n(n)
+    up = high.rolling(n, min_periods=n).apply(
+        lambda x: float((n - 1) - int(np.argmax(x))), raw=True
+    )
+    down = low.rolling(n, min_periods=n).apply(
+        lambda x: float((n - 1) - int(np.argmin(x))), raw=True
+    )
+    return pd.DataFrame(
+        {"aroon_up": 100 * (n - up) / n, "aroon_down": 100 * (n - down) / n}
+    )
+
+
+def supertrend(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    factor: float = 3.0,
+    atr_period: int | float = 10,
+) -> pd.DataFrame:
+    """超级趋势,返回 ``{supertrend, direction}``(direction=+1 多头 / -1 空头)。
+
+    下轨做多止损、上轨做空止损,逐根递推(无闭式,首 ``atr_period`` 根为 NaN)。
+    """
+    atr_period = _n(atr_period)
+    hl2 = (high + low) / 2
+    atr_ = atr(high, low, close, atr_period)
+    basic_ub = hl2 + factor * atr_
+    basic_lb = hl2 - factor * atr_
+
+    n = len(close)
+    final_ub = pd.Series(np.nan, index=close.index, dtype="float64")
+    final_lb = pd.Series(np.nan, index=close.index, dtype="float64")
+    st = pd.Series(np.nan, index=close.index, dtype="float64")
+    direction = pd.Series(0, index=close.index, dtype="int64")
+
+    start = atr_period - 1  # 第一个有效 ATR 的位置(0-indexed)
+    if start >= n:
+        return pd.DataFrame({"supertrend": st, "direction": direction})
+    final_ub.iloc[start] = basic_ub.iloc[start]
+    final_lb.iloc[start] = basic_lb.iloc[start]
+    direction.iloc[start] = 1
+    st.iloc[start] = final_lb.iloc[start]
+
+    for i in range(start + 1, n):
+        final_ub.iloc[i] = (
+            basic_ub.iloc[i]
+            if (basic_ub.iloc[i] < final_ub.iloc[i - 1])
+            or (close.iloc[i - 1] > final_ub.iloc[i - 1])
+            else final_ub.iloc[i - 1]
+        )
+        final_lb.iloc[i] = (
+            basic_lb.iloc[i]
+            if (basic_lb.iloc[i] > final_lb.iloc[i - 1])
+            or (close.iloc[i - 1] < final_lb.iloc[i - 1])
+            else final_lb.iloc[i - 1]
+        )
+        if direction.iloc[i - 1] == 1:  # 前一根多头
+            if close.iloc[i] < final_lb.iloc[i]:
+                direction.iloc[i] = -1
+                st.iloc[i] = final_ub.iloc[i]
+            else:
+                direction.iloc[i] = 1
+                st.iloc[i] = final_lb.iloc[i]
+        else:  # 前一根空头
+            if close.iloc[i] > final_ub.iloc[i]:
+                direction.iloc[i] = 1
+                st.iloc[i] = final_lb.iloc[i]
+            else:
+                direction.iloc[i] = -1
+                st.iloc[i] = final_ub.iloc[i]
+
+    return pd.DataFrame({"supertrend": st, "direction": direction})
+
+
+def psar(
+    high: pd.Series,
+    low: pd.Series,
+    start: float = 0.02,
+    inc: float = 0.02,
+    max_: float = 0.2,
+) -> pd.Series:
+    """抛物线 SAR(加速因子 ``start``,步进 ``inc``,上限 ``max_``)。
+
+    逐根递推;多头起点 SAR 从首根最低价开始,SAR 不超过前两根低点(空头反之)。
+    """
+    n = len(high)
+    sar = pd.Series(np.nan, index=high.index, dtype="float64")
+    trend_up = True
+    ep = float(high.iloc[0])
+    af = start
+    sar.iloc[0] = float(low.iloc[0])
+    for i in range(1, n):
+        prev_sar = float(sar.iloc[i - 1])
+        if trend_up:
+            sar_i = prev_sar + af * (ep - prev_sar)
+            if i >= 2:
+                sar_i = min(sar_i, float(low.iloc[i - 1]), float(low.iloc[i - 2]))
+            if float(low.iloc[i]) < sar_i:
+                sar.iloc[i] = ep
+                trend_up = False
+                ep = float(low.iloc[i])
+                af = start
+            else:
+                sar.iloc[i] = sar_i
+                if float(high.iloc[i]) > ep:
+                    ep = float(high.iloc[i])
+                    af = min(af + inc, max_)
+        else:
+            sar_i = prev_sar - af * (prev_sar - ep)
+            if i >= 2:
+                sar_i = max(sar_i, float(high.iloc[i - 1]), float(high.iloc[i - 2]))
+            if float(high.iloc[i]) > sar_i:
+                sar.iloc[i] = ep
+                trend_up = True
+                ep = float(high.iloc[i])
+                af = start
+            else:
+                sar.iloc[i] = sar_i
+                if float(low.iloc[i]) < ep:
+                    ep = float(low.iloc[i])
+                    af = min(af + inc, max_)
+    return sar
+
+
 # ── 波动 ────────────────────────────────────────────────
+def tr(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    """真实波幅 TR = max(high-low, |high-prev_close|, |low-prev_close|)。"""
+    prev_close = close.shift(1)
+    return pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+
+
 def atr(
     high: pd.Series, low: pd.Series, close: pd.Series, n: int | float = 14
 ) -> pd.Series:
     """平均真实波幅 ATR(用 RMA 平滑,同 Pine)。"""
     n = _n(n)
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
-    ).max(axis=1)
-    return rma(tr, n)
+    return rma(tr(high, low, close), n)
 
 
 def bb(close: pd.Series, n: int | float = 20, mult: float = 2.0) -> pd.DataFrame:
@@ -200,6 +414,22 @@ def donchian(high: pd.Series, low: pd.Series, n: int | float) -> pd.DataFrame:
             "upper": high.rolling(n, min_periods=n).max(),
             "lower": low.rolling(n, min_periods=n).min(),
         }
+    )
+
+
+def kc(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    n: int | float = 20,
+    mult: float = 1.5,
+) -> pd.DataFrame:
+    """肯特纳通道,返回 ``{mid, upper, lower}``(SMA 中轨 + ATR 带宽)。"""
+    n = _n(n)
+    mid = sma(close, n)
+    rng = sma(tr(high, low, close), n)
+    return pd.DataFrame(
+        {"mid": mid, "upper": mid + mult * rng, "lower": mid - mult * rng}
     )
 
 
@@ -265,24 +495,52 @@ def barssince(cond: pd.Series) -> pd.Series:
     return out
 
 
+def rising(s: pd.Series, n: int | float = 1) -> pd.Series:
+    """最近 n 根内严格上升(布尔,同 Pine ta.rising)。"""
+    n = _n(n)
+    out = s > s.shift(1)
+    for i in range(1, n):
+        out &= s.shift(i) > s.shift(i + 1)
+    return out
+
+
+def falling(s: pd.Series, n: int | float = 1) -> pd.Series:
+    """最近 n 根内严格下降(布尔,同 Pine ta.falling)。"""
+    n = _n(n)
+    out = s < s.shift(1)
+    for i in range(1, n):
+        out &= s.shift(i) < s.shift(i + 1)
+    return out
+
+
 # ── 元数据(供「指标库」页展示)────────────────────────────
 INDICATOR_CATEGORIES: dict[str, str] = {
     "sma": "趋势",
     "ema": "趋势",
     "wma": "趋势",
     "rma": "趋势",
+    "vwma": "趋势",
+    "hma": "趋势",
     "rsi": "振荡",
     "macd": "振荡",
     "stoch": "振荡",
     "cci": "振荡",
     "obv": "振荡",
+    "mfi": "振荡",
+    "wpr": "振荡",
+    "dmi": "趋势",
+    "aroon": "趋势",
+    "supertrend": "趋势",
+    "psar": "趋势",
     "atr": "波动",
+    "tr": "波动",
     "bb": "波动",
     "stdev": "波动",
     "variance": "波动",
     "highest": "通道",
     "lowest": "通道",
     "donchian": "通道",
+    "kc": "通道",
     "change": "变化",
     "roc": "变化",
     "momentum": "变化",
@@ -290,6 +548,8 @@ INDICATOR_CATEGORIES: dict[str, str] = {
     "cross_under": "信号",
     "valuewhen": "信号",
     "barssince": "信号",
+    "rising": "信号",
+    "falling": "信号",
 }
 
 

@@ -76,6 +76,105 @@ def test_barssince():
     assert out.iloc[4] == 0
 
 
+def test_tr():
+    high = pd.Series([11.0, 13.0, 12.0, 14.0])
+    low = pd.Series([9.0, 10.0, 11.0, 12.0])
+    close = pd.Series([10.0, 12.0, 11.0, 13.0])
+    t = indicators.tr(high, low, close)
+    assert t.iloc[0] == 2.0  # 首根无 prev_close,取 high-low
+    assert t.iloc[1] == 3.0  # max(3, |13-10|=3, |10-10|=0)
+    assert t.iloc[2] == 1.0  # max(1, |12-12|=0, |11-12|=1)
+    assert t.iloc[3] == 3.0  # max(2, |14-11|=3, |12-11|=1)
+
+
+def test_vwma_equal_volume_is_mean():
+    close = pd.Series([10.0, 11.0, 12.0])
+    volume = pd.Series([100.0, 100.0, 100.0])
+    out = indicators.vwma(close, volume, 3)
+    assert abs(out.iloc[2] - 11.0) < 1e-9
+
+
+def test_hma_finite():
+    s = pd.Series(range(1, 41), dtype=float)
+    out = indicators.hma(s, 16)
+    assert len(out) == len(s)
+    assert not out.dropna().empty
+
+
+def test_mfi_wpr_bounds():
+    rng = np.random.default_rng(2)
+    close = pd.Series(rng.normal(100, 5, 300)).cumsum()
+    high = close + 1
+    low = close - 1
+    volume = pd.Series(rng.uniform(1000, 5000, 300))
+    mfi = indicators.mfi(high, low, close, volume, 14)
+    assert mfi.dropna().between(0, 100).all()
+    wpr = indicators.wpr(high, low, close, 14)
+    assert wpr.dropna().between(-100, 0).all()
+
+
+def test_dmi_aroon_kc_columns():
+    idx = pd.date_range("2024-01-01", periods=80)
+    close = pd.Series(np.linspace(10, 20, 80), index=idx)
+    high = close + 1
+    low = close - 1
+    assert set(indicators.dmi(high, low, close).columns) == {
+        "plus_di",
+        "minus_di",
+        "adx",
+    }
+    aroon = indicators.aroon(high, low)
+    assert set(aroon.columns) == {"aroon_up", "aroon_down"}
+    assert ((aroon.dropna() >= 0) & (aroon.dropna() <= 100)).all().all()
+    assert set(indicators.kc(high, low, close).columns) == {"mid", "upper", "lower"}
+
+
+def test_rising_falling():
+    s = pd.Series([1.0, 2.0, 3.0, 2.0, 1.0])
+    assert list(indicators.rising(s, 1)) == [False, True, True, False, False]
+    assert list(indicators.falling(s, 1)) == [False, False, False, True, True]
+
+
+def test_supertrend_uptrend():
+    # atr_period=1 → ATR=TR=2(逐根 high-low),factor=1 → 上下轨 ±2,hl2 整数。
+    high = pd.Series([12.0, 13.0, 14.0, 15.0])
+    low = pd.Series([10.0, 11.0, 12.0, 13.0])
+    close = pd.Series([11.0, 12.0, 13.0, 14.0])
+    out = indicators.supertrend(high, low, close, factor=1.0, atr_period=1)
+    assert list(out["supertrend"]) == [9.0, 10.0, 11.0, 12.0]
+    assert list(out["direction"]) == [1, 1, 1, 1]
+
+
+def test_supertrend_downtrend_flips():
+    idx = pd.date_range("2024-01-01", periods=80)
+    close = pd.Series(np.linspace(50.0, 10.0, 80), index=idx)
+    high = close + 1
+    low = close - 1
+    out = indicators.supertrend(high, low, close, factor=3.0, atr_period=5)
+    assert out["direction"].iloc[-1] == -1
+    assert out["supertrend"].iloc[-1] > close.iloc[-1]
+
+
+def test_psar_uptrend_anchor():
+    high = pd.Series([10.0, 11.0, 12.0, 13.0, 14.0])
+    low = pd.Series([9.0, 10.0, 11.0, 12.0, 13.0])
+    sar = indicators.psar(high, low, 0.02, 0.02, 0.2)
+    assert sar.iloc[0] == 9.0
+    assert abs(sar.iloc[1] - 9.02) < 1e-9
+    assert sar.iloc[2] == 9.0  # 被钳制到前低
+    assert abs(sar.iloc[3] - 9.18) < 1e-9
+    assert abs(sar.iloc[4] - 9.4856) < 1e-9
+
+
+def test_psar_below_price_in_uptrend():
+    idx = pd.date_range("2024-01-01", periods=80)
+    high = pd.Series(np.linspace(10.0, 40.0, 80), index=idx)
+    low = high - 2
+    sar = indicators.psar(high, low)
+    assert sar.notna().all()
+    assert (sar < high).all()  # 强多头无翻转,SAR 始终在最高价之下
+
+
 def test_indicator_specs():
     specs = indicators.indicator_specs()
     assert {s["name"] for s in specs} == set(indicators.__all__)

@@ -80,6 +80,18 @@ _TA_MAP: dict[str, str] = {
     "crossunder": "cross_under",
     "valuewhen": "valuewhen",
     "barssince": "barssince",
+    "vwma": "vwma",
+    "hma": "hma",
+    "dmi": "dmi",
+    "aroon": "aroon",
+    "mfi": "mfi",
+    "wpr": "wpr",
+    "tr": "tr",
+    "kc": "kc",
+    "rising": "rising",
+    "falling": "falling",
+    "supertrend": "supertrend",
+    "sar": "psar",
 }
 
 _MATH_MAP: dict[str, str] = {
