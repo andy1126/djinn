@@ -8,9 +8,13 @@ import pytest
 
 from djinn.strategy import (
     DCA,
+    BollingerReversion,
+    MACDCrossover,
     MACrossover,
     Momentum,
     RSIReversal,
+    StochasticCross,
+    Supertrend,
     get_strategy_class,
     param_schema,
 )
@@ -102,3 +106,50 @@ def test_dca_has_param_schema():
     schema = [s.name for s in param_schema(DCA)]
     assert "frequency" in schema
     assert "amount" in schema
+
+
+def _ohlcv(close: np.ndarray) -> pd.DataFrame:
+    """构造 OHLCV DataFrame(high/low 围绕 close ±1,volume 常数)。"""
+    idx = pd.bdate_range("2024-01-02", periods=len(close))
+    df = pd.DataFrame({"close": close}, index=idx)
+    return df.assign(open=df.close, high=df.close + 1, low=df.close - 1, volume=1000)
+
+
+def test_new_timing_strategies_signal_states():
+    """四个新策略都能产生合法持仓状态(值 ∈ {-1,0,1} 且长度一致)。"""
+    close = np.concatenate([np.linspace(100, 70, 40), np.linspace(70, 120, 40)])
+    df = _ohlcv(close)
+    for strat in (
+        MACDCrossover(),
+        BollingerReversion(),
+        Supertrend(),
+        StochasticCross(),
+    ):
+        sig = strat.signals(df)
+        assert len(sig) == len(df)
+        assert set(np.unique(sig.values)).issubset({-1, 0, 1})
+
+
+def test_supertrend_signals_long_in_uptrend():
+    close = np.linspace(100, 160, 80)
+    sig = Supertrend().signals(_ohlcv(close))
+    assert sig.iloc[-1] == 1  # 强多头末态
+
+
+def test_bollinger_reversion_triggers_on_dip():
+    # 平盘后一次尖底跌破下轨 → 触发做多
+    close = np.concatenate(
+        [np.full(30, 100.0), np.array([85.0, 80.0, 100.0, 100.0, 100.0])]
+    )
+    sig = BollingerReversion(period=20, num_std=2.0).signals(_ohlcv(close))
+    assert (sig == 1).any()
+
+
+def test_new_strategies_in_registry():
+    for name, cls in (
+        ("MACDCrossover", MACDCrossover),
+        ("BollingerReversion", BollingerReversion),
+        ("Supertrend", Supertrend),
+        ("StochasticCross", StochasticCross),
+    ):
+        assert get_strategy_class(name) is cls

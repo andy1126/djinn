@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from djinn.indicators import rsi
 from djinn.strategy.base import Strategy
+from djinn.strategy.library.bollinger_reversion import BollingerReversion
+from djinn.strategy.library.buy_and_hold import BuyAndHold
+from djinn.strategy.library.cross_sectional_momentum import CrossSectionalMomentum
 from djinn.strategy.library.dca import DCA
+from djinn.strategy.library.dual_momentum import DualMomentum
 from djinn.strategy.library.factor_portfolio import FactorPortfolioStrategy
+from djinn.strategy.library.grid import Grid
 from djinn.strategy.library.ma_crossover import MACrossover
+from djinn.strategy.library.macd_crossover import MACDCrossover
 from djinn.strategy.library.momentum import Momentum
+from djinn.strategy.library.pairs import PairsSpread
 from djinn.strategy.library.rsi_reversal import RSIReversal
+from djinn.strategy.library.stochastic import StochasticCross
+from djinn.strategy.library.supertrend import Supertrend
+from djinn.strategy.library.turtle_atr import TurtleATR
 from djinn.strategy.store import StrategyStore, get_strategy_store
 from djinn.strategy.user import compile_user_strategy
 
@@ -18,6 +28,16 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "RSIReversal": RSIReversal,
     "Momentum": Momentum,
     "DCA": DCA,
+    "MACDCrossover": MACDCrossover,
+    "BollingerReversion": BollingerReversion,
+    "Supertrend": Supertrend,
+    "StochasticCross": StochasticCross,
+    "BuyAndHold": BuyAndHold,
+    "CrossSectionalMomentum": CrossSectionalMomentum,
+    "DualMomentum": DualMomentum,
+    "TurtleATR": TurtleATR,
+    "Grid": Grid,
+    "PairsSpread": PairsSpread,
     "FactorPortfolio": FactorPortfolioStrategy,
 }
 
@@ -39,10 +59,20 @@ def get_strategy_class(name: str, store: StrategyStore | None = None) -> type[St
 __all__ = [
     "DCA",
     "STRATEGY_REGISTRY",
+    "BollingerReversion",
+    "BuyAndHold",
+    "CrossSectionalMomentum",
+    "DualMomentum",
     "FactorPortfolioStrategy",
+    "Grid",
+    "MACDCrossover",
     "MACrossover",
     "Momentum",
+    "PairsSpread",
     "RSIReversal",
+    "StochasticCross",
+    "Supertrend",
+    "TurtleATR",
     "get_strategy_class",
     "rsi",
 ]
