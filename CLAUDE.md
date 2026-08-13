@@ -94,6 +94,9 @@ Data(数据提供器 + 缓存 + 基本面/universe) → Factor(因子引擎/分�
 # 安装(内核 + 开发工具)
 uv pip install -e ".[dev]"
 
+# 开发环境一键启停前后端(后端 --reload + 前端 Vite)
+./scripts/dev.sh start|stop|restart|status
+
 # 后端
 ruff check src/djinn tests --fix
 black src/djinn tests
@@ -101,7 +104,7 @@ mypy --strict src/djinn
 pytest -n auto                          # 全部
 pytest tests/unit/test_api.py -v        # 单文件
 pytest tests/unit/test_config.py::test_load_example_yaml -v  # 单测
-python -m uvicorn djinn.api.main:app --host 0.0.0.0 --port 8000  # 启 API
+python -m uvicorn djinn.api.main:app --host 0.0.0.0 --port 8000 --reload  # 启 API(开发热重载)
 
 # 前端
 cd frontend && npm install
