@@ -27,3 +27,23 @@ class TurnoverFactor(Factor):
         mean_amount = amount.rolling(int(self.period)).mean()
         cap = float_cap.reindex(index=prices.index, columns=prices.columns)
         return mean_amount / cap.replace(0.0, pd.NA)
+
+
+class AmihudFactor(Factor):
+    """Amihud 非流动性 = N 日均值(|日收益| / 成交额)。"""
+
+    name = "amihud"
+    category = "liquidity"
+    period = param(20, min=1, max=120, description="平滑窗口(交易日)")
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        amount = ohlcv.get(COL_AMOUNT)
+        if amount is None:
+            return pd.DataFrame(
+                float("nan"), index=prices.index, columns=prices.columns
+            )
+        amt = amount.reindex(index=prices.index, columns=prices.columns)
+        illiq = prices.pct_change().abs() / amt.where(amt > 0)
+        return illiq.rolling(int(self.period)).mean()

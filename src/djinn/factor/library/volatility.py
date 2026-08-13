@@ -37,3 +37,18 @@ class BetaFactor(Factor):
         cov = ret.rolling(p).cov(market)
         var = market.rolling(p).var()
         return cov.div(var.replace(0.0, pd.NA), axis=0)
+
+
+class DownsideVolatilityFactor(Factor):
+    """N 日下行波动率(仅负收益的标准差)。"""
+
+    name = "downside_volatility"
+    category = "volatility"
+    period = param(20, min=5, max=250, description="回看窗口(交易日)")
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        ret = prices.pct_change()
+        downside = ret.where(ret < 0)
+        return downside.rolling(int(self.period)).std()
