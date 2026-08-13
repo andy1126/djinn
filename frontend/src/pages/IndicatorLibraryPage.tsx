@@ -80,19 +80,21 @@ export default function IndicatorLibraryPage() {
   }
 
   const catalogColumns = [
-    { title: '名称', dataIndex: 'name', key: 'name', render: (n: string) => <Typography.Text code>{n}</Typography.Text> },
-    { title: '分类', dataIndex: 'category', key: 'category', render: (c: string) => <Tag color="blue">{c}</Tag> },
-    { title: '签名', dataIndex: 'signature', key: 'signature', render: (s: string) => <Typography.Text code>{s}</Typography.Text> },
-    { title: '说明', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 110, render: (n: string) => <Typography.Text code>{n}</Typography.Text> },
+    { title: '分类', dataIndex: 'category', key: 'category', width: 80, render: (c: string) => <Tag color="blue">{c}</Tag> },
+    { title: '签名', dataIndex: 'signature', key: 'signature', width: 240, ellipsis: true, render: (s: string) => <Typography.Text code>{s}</Typography.Text> },
+    { title: '说明', dataIndex: 'description', key: 'description', width: 380 },
     {
       title: '来源',
       dataIndex: 'origin',
       key: 'origin',
+      width: 80,
       render: (o: string) => (o === 'builtin' ? '内置' : <Tag color="green">自定义</Tag>),
     },
     {
       title: '操作',
       key: 'actions',
+      width: 70,
       render: (_: unknown, r: IndicatorInfo) => (
         <Button size="small" onClick={() => setViewing(r)}>查看</Button>
       ),
@@ -130,6 +132,7 @@ export default function IndicatorLibraryPage() {
           size="small"
           loading={isLoading}
           pagination={false}
+          tableLayout="fixed"
         />
       </Card>
 
