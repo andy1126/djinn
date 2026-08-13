@@ -147,7 +147,7 @@ init_typed = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --dist=loadfile"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "benchmark: pytest-benchmark perf tests",

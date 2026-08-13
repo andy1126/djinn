@@ -31,7 +31,8 @@ def setup_module() -> None:
 
 
 def teardown_module() -> None:
-    app.dependency_overrides.clear()
+    # 只移除自身 override,避免清掉同 worker 内其他测试文件的注入
+    app.dependency_overrides.pop(get_profile_registry, None)
 
 
 def test_create_profile():
