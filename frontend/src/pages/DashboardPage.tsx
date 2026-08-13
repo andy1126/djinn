@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Card, Empty, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -22,12 +22,21 @@ export default function DashboardPage() {
   const [detailJobId, setDetailJobId] = useState<string | null>(null)
   const [compareJobIds, setCompareJobIds] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<'detail' | 'compare'>('detail')
+  const resultRef = useRef<HTMLDivElement>(null)
+
+  const scrollToResult = () => {
+    // 等报告渲染一帧后再滚动,避免目标高度尚未确定
+    setTimeout(() => {
+      resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+  }
 
   // 深链 /results/:jobId → 预选该任务并切到详情
   useEffect(() => {
     if (jobId) {
       setDetailJobId(jobId)
       setActiveTab('detail')
+      scrollToResult()
     }
   }, [jobId])
 
@@ -40,6 +49,7 @@ export default function DashboardPage() {
   const openDetail = (id: string) => {
     setDetailJobId(id)
     setActiveTab('detail')
+    scrollToResult()
   }
 
   const columns = [
@@ -132,28 +142,30 @@ export default function DashboardPage() {
         />
       </Card>
 
-      <Card>
-        <Tabs
-          activeKey={activeTab}
-          onChange={(k) => setActiveTab(k as 'detail' | 'compare')}
-          items={[
-            {
-              key: 'detail',
-              label: '结果详情',
-              children: detailJobId ? (
-                <ReportDetail jobId={detailJobId} />
-              ) : (
-                <Empty description="点击任务列表中的「查看结果」加载报告" style={{ padding: 48 }} />
-              ),
-            },
-            {
-              key: 'compare',
-              label: '结果对比',
-              children: <ReportCompare jobIds={compareJobIds} />,
-            },
-          ]}
-        />
-      </Card>
+      <div ref={resultRef}>
+        <Card>
+          <Tabs
+            activeKey={activeTab}
+            onChange={(k) => setActiveTab(k as 'detail' | 'compare')}
+            items={[
+              {
+                key: 'detail',
+                label: '结果详情',
+                children: detailJobId ? (
+                  <ReportDetail jobId={detailJobId} />
+                ) : (
+                  <Empty description="点击任务列表中的「查看结果」加载报告" style={{ padding: 48 }} />
+                ),
+              },
+              {
+                key: 'compare',
+                label: '结果对比',
+                children: <ReportCompare jobIds={compareJobIds} />,
+              },
+            ]}
+          />
+        </Card>
+      </div>
     </Space>
   )
 }
