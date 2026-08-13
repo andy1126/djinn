@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from djinn.api.deps import get_registry
 from djinn.api.schemas import (
     StockDetail,
+    StockProfile,
     SymbolSearchResponse,
     SymbolSearchResult,
 )
@@ -86,16 +87,17 @@ async def stock_detail(
     def _f(col: str) -> float | None:
         if row is None or col not in row.index:
             return None
-        v = row[col]
+        v: Any = row[col]
         try:
             f = float(v)
         except (TypeError, ValueError):
             return None
         return f if _finite(f) else None
 
-    # 名称 / 价格:优先从 provider 自身能力取
+    # 名称 / 价格 / 扩展档案:优先从 provider 自身能力取
     name = _provider_name(provider, symbol, m)
     price = _provider_price(provider, symbol, m)
+    profile = _provider_profile(provider, symbol, m)
 
     return StockDetail(
         symbol=symbol,
@@ -109,8 +111,11 @@ async def stock_detail(
         float_cap=_f("float_cap"),
         roe=_f("roe"),
         gross_margin=_f("gross_margin"),
+        revenue=_f("revenue"),
+        net_profit=_f("net_profit"),
         revenue_yoy=_f("revenue_yoy"),
         profit_yoy=_f("profit_yoy"),
+        profile=profile,
     )
 
 
@@ -133,5 +138,20 @@ def _provider_price(provider: Any, symbol: str, market: Market | None) -> float 
     try:
         p = provider.get_stock_price(symbol, market)
         return float(p) if p is not None else None
+    except Exception:
+        return None
+
+
+def _provider_profile(
+    provider: Any, symbol: str, market: Market | None
+) -> StockProfile | None:
+    """取标的扩展档案(仅部分 provider 支持,失败/不支持返回 None)。"""
+    try:
+        data = provider.get_profile(symbol, market)
+        if not data:
+            return None
+        return StockProfile(**data)
+    except NotImplementedError:
+        return None
     except Exception:
         return None

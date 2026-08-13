@@ -87,6 +87,10 @@ class FundamentalsRouter(FundamentalsSource):
                 val = pd.DataFrame(index=group)
             # 财务字段(PIT:逐标的 asof)
             fin = self._financial_snapshot(provider, group, when)
+            # 财务比率(roe/毛利率/同比)以 PIT 时序为准,丢弃快照中的同名列
+            overlap = [c for c in fin.columns if c in val.columns]
+            if overlap:
+                val = val.drop(columns=overlap)
             merged = val.join(fin, how="outer")
             frames.append(merged)
         if frames:

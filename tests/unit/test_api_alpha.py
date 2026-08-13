@@ -350,6 +350,54 @@ def test_screen_with_scoring_and_top_n() -> None:
     assert scores == sorted(scores, reverse=True)
 
 
+def test_screen_fields() -> None:
+    resp = client.get("/screens/fields")
+    assert resp.status_code == 200
+    fields = resp.json()["fields"]
+    assert fields, "字段列表不应为空"
+    by_name = {f["name"]: f for f in fields}
+    # 覆盖截面快照的全部可筛选列(FUNDAMENTAL_VALUE_COLUMNS)
+    from djinn.data.schema import FUNDAMENTAL_VALUE_COLUMNS
+
+    assert set(by_name) == set(FUNDAMENTAL_VALUE_COLUMNS)
+    # 每个字段带中文标签 + 分组
+    for f in fields:
+        assert f["label"]
+        assert f["group"] in {"valuation", "financial"}
+    assert by_name["pe"]["label"]
+    assert by_name["pe"]["group"] == "valuation"
+
+
+def test_screen_markets() -> None:
+    resp = client.get("/screens/markets")
+    assert resp.status_code == 200
+    markets = resp.json()["markets"]
+    by_market = {m["market"]: m for m in markets}
+    assert set(by_market) == {"CN", "HK", "US"}
+    # 每个市场带标签;不可用市场带原因
+    assert by_market["HK"]["available"] is True
+    assert by_market["US"]["available"] is True
+    for m in markets:
+        assert m["label"]
+        if not m["available"]:
+            assert m["reason"]
+
+
+def test_screen_list() -> None:
+    # 先创建一个任务,再确认列表能查回(历史结果不因刷新丢失)
+    resp = client.post("/screens", json={"symbols": _SYMBOLS, "conditions": []})
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    _wait_done(job_id, "/screens")
+    lst = client.get("/screens").json()
+    assert isinstance(lst, list)
+    hit = next((j for j in lst if j["job_id"] == job_id), None)
+    assert hit is not None
+    assert hit["status"] == "done"
+    assert hit["kind"] == "screen"
+    assert hit["title"]
+
+
 # ── 股票池 ─────────────────────────────────────────────
 def test_universe_stock_list() -> None:
     resp = client.get("/universe/stock-list?market=CN")

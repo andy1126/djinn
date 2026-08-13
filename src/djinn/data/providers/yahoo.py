@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import time
 from datetime import date
+from typing import Any, cast
 
 import pandas as pd
 
@@ -24,17 +25,26 @@ from djinn.data.provider import DataProvider
 from djinn.data.schema import (
     COL_ADJ_FACTOR,
     COL_AMOUNT,
+    COL_ANNOUNCE_DATE,
     COL_CLOSE,
     COL_DIVIDEND,
+    COL_FLOAT_CAP,
+    COL_GROSS_MARGIN,
     COL_HIGH,
     COL_IS_SUSPENDED,
     COL_LOW,
     COL_MARKET_CAP,
+    COL_NET_PROFIT,
     COL_OPEN,
     COL_PB,
     COL_PE,
+    COL_PROFIT_YOY,
     COL_PS,
     COL_RAW_CLOSE,
+    COL_REPORT_DATE,
+    COL_REVENUE,
+    COL_REVENUE_YOY,
+    COL_ROE,
     COL_SPLIT_RATIO,
     COL_VOLUME,
     Adjust,
@@ -224,10 +234,11 @@ class YahooProvider(DataProvider):
 
     # ── 基本面(美/港兜底,Phase 0 扩展)─────────────────────
     def get_fundamentals(self, symbols: list[str], when: date) -> pd.DataFrame:
-        """截面估值快照(``Ticker.info``,实时口径,美/港兜底)。
+        """截面基本面快照(``Ticker.info``,实时口径,美/港兜底)。
 
-        仅含 market_cap / pe / pb / ps 等 valuation 字段;``when`` 仅作记录
-        (info 为最新值,非历史 PIT)。网络抖动时按单标的降级,不整体失败。
+        覆盖全部 11 个 FUNDAMENTAL_VALUE_COLUMNS(估值 + 财务 + 成长);
+        ``when`` 仅作记录(info 为最新值,非历史 PIT)。网络抖动时按单标的降级,
+        不整体失败。
         """
         try:
             import yfinance as yf
@@ -237,7 +248,8 @@ class YahooProvider(DataProvider):
         for sym in symbols:
             cache_symbol = f"info_{sym}"
             cached = self.cache.get_fundamentals(self.name, cache_symbol)
-            if cached is not None and len(cached):
+            # 旧缓存只有估值 4 列(缺 COL_REVENUE),视为 miss 重拉自愈(同 index_cons 缺 name 列)
+            if cached is not None and len(cached) and COL_REVENUE in cached.columns:
                 rows[sym] = {c: float(cached.iloc[0][c]) for c in cached.columns}
                 continue
             self._throttle()
@@ -248,15 +260,87 @@ class YahooProvider(DataProvider):
                 continue
             row = {
                 COL_MARKET_CAP: _fnum(info.get("marketCap")),
+                COL_FLOAT_CAP: _float_cap(info),
                 COL_PE: _fnum(info.get("trailingPE")),
                 COL_PB: _fnum(info.get("priceToBook")),
                 COL_PS: _fnum(info.get("priceToSalesTrailing12Months")),
+                COL_ROE: _pct(info.get("returnOnEquity")),
+                COL_GROSS_MARGIN: _pct(info.get("grossMargins")),
+                COL_REVENUE: _fnum(info.get("totalRevenue")),
+                COL_NET_PROFIT: _fnum(info.get("netIncomeToCommon")),
+                COL_REVENUE_YOY: _pct(info.get("revenueGrowth")),
+                COL_PROFIT_YOY: _pct(info.get("earningsGrowth")),
             }
             self.cache.put_fundamentals(self.name, cache_symbol, pd.DataFrame([row]))
             rows[sym] = row
         if not rows:
             raise DataError(f"yfinance 基本面快照为空: {symbols}")
         return pd.DataFrame.from_dict(rows, orient="index")
+
+    def get_fundamentals_history(
+        self, symbol: str, start: date, end: date
+    ) -> pd.DataFrame:
+        """单标的财务时序(income_stmt + balance_sheet 年度报表)。
+
+        yfinance 无公告日,报表列即财报期末;此处以 ``report_date + 45 天``
+        近似公告日(同 A 股 akshare 口径,标注为近似)。Yahoo 硬性上限 ~4 年度,
+        同比/ROE 序列较稀疏但非空。
+        """
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        cache_symbol = f"finhist_{symbol}"
+        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        if cached is not None and len(cached):
+            return cached
+        self._throttle()
+        try:
+            t = yf.Ticker(symbol)
+            ist = t.income_stmt
+            bs = t.balance_sheet
+        except Exception as e:
+            raise ProviderError(f"yfinance 拉取 {symbol} 财务报表失败: {e}") from e
+        if ist is None or len(ist) == 0:
+            raise DataError(f"yfinance {symbol} 利润表为空")
+        df = self._normalize_fin_history(ist, bs)
+        if df is None or len(df) == 0:
+            raise DataError(f"yfinance {symbol} 财务时序为空")
+        self.cache.put_fundamentals(self.name, cache_symbol, df)
+        return df
+
+    @staticmethod
+    def _normalize_fin_history(ist: pd.DataFrame, bs: pd.DataFrame) -> pd.DataFrame:
+        """income_stmt / balance_sheet → 规范化财务时序(roe/gross_margin/同比)。"""
+
+        def row_at(frm: pd.DataFrame, label: str) -> pd.Series:
+            if frm is None or label not in frm.index:
+                return pd.Series(dtype=float)
+            return pd.to_numeric(cast(pd.Series, frm.loc[label]), errors="coerce")
+
+        revenue = row_at(ist, "Total Revenue")
+        net_income = row_at(ist, "Net Income")
+        gross_profit = row_at(ist, "Gross Profit")
+        equity = row_at(bs, "Stockholders Equity")
+        if len(revenue) == 0:
+            return pd.DataFrame()
+
+        periods = revenue.index
+        out = pd.DataFrame(index=pd.DatetimeIndex(periods, name="date"))
+        out[COL_ROE] = _safe_div(net_income, equity).reindex(periods) * 100.0
+        out[COL_GROSS_MARGIN] = (
+            _safe_div(gross_profit, revenue).reindex(periods) * 100.0
+        )
+        # 同比:与上一会计年度比较(升序后 shift 1)
+        rev_asc = revenue.reindex(periods).sort_index()
+        ni_asc = net_income.reindex(periods).sort_index()
+        rev_yoy = (_safe_div(rev_asc, rev_asc.shift(1)) - 1.0) * 100.0
+        ni_yoy = (_safe_div(ni_asc, ni_asc.shift(1)) - 1.0) * 100.0
+        out[COL_REVENUE_YOY] = rev_yoy.reindex(periods)
+        out[COL_PROFIT_YOY] = ni_yoy.reindex(periods)
+        out[COL_REPORT_DATE] = pd.DatetimeIndex(periods)
+        out[COL_ANNOUNCE_DATE] = pd.DatetimeIndex(periods) + pd.Timedelta(days=45)
+        return out.sort_index()
 
     def _throttle(self) -> None:
         if self.rate_limit_sec > 0:
@@ -406,6 +490,37 @@ class YahooProvider(DataProvider):
             raise DataError(f"yfinance {symbol} 价格非法")
         return f
 
+    def get_profile(self, symbol: str, market: Market | None = None) -> dict[str, Any]:
+        """单标的扩展档案(估值扩展/盈利质量/财务健康/行情/分析师/公司概况)。
+
+        从 ``Ticker.info`` 抽取,百分比字段转百分数;A 股不在此列。
+        """
+        if market is Market.CN:
+            raise NotImplementedError("yahoo 不支持 A 股 profile")
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        self._throttle()
+        try:
+            info = yf.Ticker(symbol).info or {}
+        except Exception as e:
+            _log.warning("yfinance %s profile 拉取失败: %s", symbol, e)
+            return {}
+        out: dict[str, Any] = {}
+        for src, dst in _PROFILE_NUM.items():
+            out[dst] = _fnum(info.get(src))
+        for src, dst in _PROFILE_PCT.items():
+            out[dst] = _pct(info.get(src))
+        for src, dst in _PROFILE_STR.items():
+            v = info.get(src)
+            out[dst] = str(v).strip() if v not in (None, "") else None
+        # 缺失数值字段转 None(JSON 不接受 NaN/Inf,见 CLAUDE.md 序列化约定)
+        return {
+            k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+            for k, v in out.items()
+        }
+
 
 def _fnum(v: object) -> float:
     """yfinance info 数值字段 → float(None / 非法 → nan)。"""
@@ -415,3 +530,73 @@ def _fnum(v: object) -> float:
         return float(v)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return float("nan")
+
+
+def _pct(v: object) -> float:
+    """yfinance 比例字段(0.15)→ 百分数(15.0),与 A 股新浪源口径一致。"""
+    f = _fnum(v)
+    return float("nan") if math.isnan(f) else f * 100.0
+
+
+def _float_cap(info: dict[str, Any]) -> float:
+    """流通市值 = floatShares × 现价(无字段 → nan)。"""
+    shares = _fnum(info.get("floatShares"))
+    price = _fnum(info.get("currentPrice") or info.get("regularMarketPrice"))
+    if math.isnan(shares) or math.isnan(price):
+        return float("nan")
+    return shares * price
+
+
+def _safe_div(num: pd.Series, den: pd.Series) -> pd.Series:
+    """逐项除法,除零 / 非法 → NaN(抑制 inf)。"""
+    return (num / den).replace([float("inf"), float("-inf")], float("nan"))
+
+
+# 股票详情扩展字段:info 键 → 规范化字段名(百分比字段用 _pct,其余用 _fnum)。
+_PROFILE_NUM = {
+    # 估值扩展
+    "forwardPE": "forward_pe",
+    "trailingEps": "eps_ttm",
+    "forwardEps": "forward_eps",
+    "pegRatio": "peg_ratio",
+    "bookValue": "book_value",
+    "enterpriseValue": "enterprise_value",
+    "enterpriseToEbitda": "ev_to_ebitda",
+    "beta": "beta",
+    # 财务健康
+    "currentRatio": "current_ratio",
+    "quickRatio": "quick_ratio",
+    "debtToEquity": "debt_to_equity",
+    "totalCash": "total_cash",
+    "totalDebt": "total_debt",
+    "freeCashflow": "free_cashflow",
+    # 行情动量
+    "fiftyTwoWeekHigh": "fifty_two_week_high",
+    "fiftyTwoWeekLow": "fifty_two_week_low",
+    "fiftyDayAverage": "fifty_day_avg",
+    "twoHundredDayAverage": "two_hundred_day_avg",
+    # 分析师
+    "targetMeanPrice": "target_mean_price",
+    "targetHighPrice": "target_high_price",
+    "targetLowPrice": "target_low_price",
+    "numberOfAnalystOpinions": "number_of_analysts",
+    # 分红
+    "dividendRate": "dividend_rate",
+}
+
+# 百分比字段(用 _pct 而非 _fnum)。
+_PROFILE_PCT = {
+    "operatingMargins": "operating_margin",
+    "profitMargins": "profit_margin",
+    "returnOnAssets": "return_on_assets",
+    "trailingAnnualDividendYield": "dividend_yield",
+}
+
+# 字符串字段(直接透传)。
+_PROFILE_STR = {
+    "sector": "sector",
+    "industry": "industry",
+    "recommendationKey": "recommendation",
+    "website": "website",
+    "longBusinessSummary": "summary",
+}

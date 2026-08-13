@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import date
+from typing import Any
 
 import pandas as pd
 
@@ -114,6 +115,13 @@ class DataProvider(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} 不支持 get_fundamentals_history"
         )
+
+    def get_profile(self, symbol: str, market: Market | None = None) -> dict[str, Any]:
+        """单标的扩展档案(估值扩展/盈利质量/财务健康/分析师/公司概况等)。
+
+        仅部分 provider(如 yfinance)支持,其余抛 NotImplementedError。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_profile")
 
 
 class ProviderRegistry:

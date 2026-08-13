@@ -207,8 +207,49 @@ class SymbolSearchResponse(BaseModel):
     results: list[SymbolSearchResult]
 
 
+class StockProfile(BaseModel):
+    """股票扩展档案(估值扩展 / 盈利质量 / 财务健康 / 行情 / 分析师 / 公司概况)。
+
+    仅部分 provider(如 yfinance)提供,其余市场为 ``None``。百分比字段已归一为
+    百分数(15.0 = 15%)。
+    """
+
+    forward_pe: float | None = None
+    eps_ttm: float | None = None
+    forward_eps: float | None = None
+    peg_ratio: float | None = None
+    book_value: float | None = None
+    enterprise_value: float | None = None
+    ev_to_ebitda: float | None = None
+    beta: float | None = None
+    operating_margin: float | None = None
+    profit_margin: float | None = None
+    return_on_assets: float | None = None
+    current_ratio: float | None = None
+    quick_ratio: float | None = None
+    debt_to_equity: float | None = None
+    total_cash: float | None = None
+    total_debt: float | None = None
+    free_cashflow: float | None = None
+    fifty_two_week_high: float | None = None
+    fifty_two_week_low: float | None = None
+    fifty_day_avg: float | None = None
+    two_hundred_day_avg: float | None = None
+    target_mean_price: float | None = None
+    target_high_price: float | None = None
+    target_low_price: float | None = None
+    number_of_analysts: float | None = None
+    dividend_rate: float | None = None
+    dividend_yield: float | None = None
+    sector: str | None = None
+    industry: str | None = None
+    recommendation: str | None = None
+    website: str | None = None
+    summary: str | None = None
+
+
 class StockDetail(BaseModel):
-    """单只股票详情(估值 + 财务 + 价格,字段按数据源能力降级)。"""
+    """单只股票详情(估值 + 财务 + 价格 + 扩展档案,字段按数据源能力降级)。"""
 
     symbol: str
     market: str
@@ -221,8 +262,11 @@ class StockDetail(BaseModel):
     float_cap: float | None = None
     roe: float | None = None
     gross_margin: float | None = None
+    revenue: float | None = None
+    net_profit: float | None = None
     revenue_yoy: float | None = None
     profit_yoy: float | None = None
+    profile: StockProfile | None = None
 
 
 # ── 股票池(universe)────────────────────────────────────
@@ -345,6 +389,33 @@ class ScreenRequest(BaseModel):
 class ScreenResultResponse(BaseModel):
     count: int
     results: list[dict[str, Any]]
+
+
+class ScreenField(BaseModel):
+    """可筛选字段(截面快照列):供前端筛选条件下拉枚举。"""
+
+    name: str
+    label: str
+    kind: Literal["number", "string"] = "number"
+    group: Literal["valuation", "financial"] = "financial"
+    description: str = ""
+
+
+class ScreenFieldsResponse(BaseModel):
+    fields: list[ScreenField]
+
+
+class ScreenMarket(BaseModel):
+    """选股页可用市场(不可用市场置灰)。"""
+
+    market: str
+    label: str
+    available: bool
+    reason: str = ""
+
+
+class ScreenMarketsResponse(BaseModel):
+    markets: list[ScreenMarket]
 
 
 # ── 多因子诊断(factor matrix)────────────────────────────
