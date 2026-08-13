@@ -1,22 +1,16 @@
+import { useEffect, useState } from 'react'
 import { ConfigProvider, Layout, Menu, theme } from 'antd'
+import type { MenuProps } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  DashboardOutlined,
+  HomeOutlined,
   DatabaseOutlined,
   ExperimentOutlined,
-  ThunderboltOutlined,
-  BarsOutlined,
   BarChartOutlined,
+  ThunderboltOutlined,
   SettingOutlined,
-  AppstoreOutlined,
-  SwapOutlined,
-  FundOutlined,
-  FilterOutlined,
-  ProfileOutlined,
-  EditOutlined,
-  LineChartOutlined,
 } from '@ant-design/icons'
 
 const { Header, Sider, Content } = Layout
@@ -27,43 +21,109 @@ const queryClient = new QueryClient({
   },
 })
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/data', icon: <DatabaseOutlined />, label: '数据管理' },
-  { key: '/universe', icon: <FundOutlined />, label: '股票池' },
-  { key: '/profiles', icon: <ProfileOutlined />, label: '标的组合' },
-  { key: '/factors', icon: <ExperimentOutlined />, label: '因子分析' },
-  { key: '/indicators', icon: <LineChartOutlined />, label: '指标库' },
-  { key: '/factor-matrix', icon: <ExperimentOutlined />, label: '多因子诊断' },
-  { key: '/screener', icon: <FilterOutlined />, label: '选股' },
-  { key: '/strategies', icon: <BarChartOutlined />, label: '策略配置' },
-  { key: '/strategies/editor', icon: <EditOutlined />, label: '策略编辑器' },
-  { key: '/portfolio', icon: <AppstoreOutlined />, label: '组合配置' },
-  { key: '/backtest', icon: <ThunderboltOutlined />, label: '运行回测' },
-  { key: '/results', icon: <BarChartOutlined />, label: '结果报告' },
-  { key: '/compare', icon: <SwapOutlined />, label: '结果对比' },
-  { key: '/sweep', icon: <BarsOutlined />, label: '参数扫描' },
+const menuItems: MenuProps['items'] = [
+  { key: '/', icon: <HomeOutlined />, label: '首页' },
+  {
+    key: 'data',
+    icon: <DatabaseOutlined />,
+    label: '数据',
+    children: [
+      { key: '/data', label: '数据管理' },
+      { key: '/universe', label: '股票池' },
+    ],
+  },
+  {
+    key: 'research',
+    icon: <ExperimentOutlined />,
+    label: '研究',
+    children: [
+      { key: '/factors', label: '因子分析' },
+      { key: '/factor-matrix', label: '多因子诊断' },
+      { key: '/screener', label: '选股' },
+      { key: '/indicators', label: '指标库' },
+    ],
+  },
+  {
+    key: 'strategy',
+    icon: <BarChartOutlined />,
+    label: '策略',
+    children: [
+      { key: '/strategies', label: '策略' },
+      { key: '/portfolio', label: '组合配置' },
+    ],
+  },
+  {
+    key: 'backtest',
+    icon: <ThunderboltOutlined />,
+    label: '回测',
+    children: [
+      { key: '/backtest', label: '运行回测' },
+      { key: '/sweep', label: '参数扫描' },
+      { key: '/results', label: '回测结果' },
+    ],
+  },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
+
+// 深链 /results/:jobId 归一化到菜单项 /results,保证「回测结果」高亮
+function selectedKeyFor(path: string): string {
+  if (path.startsWith('/results')) return '/results'
+  return path
+}
+
+// 根据当前路径确定需要展开的一级分组
+function openGroupFor(path: string): string[] {
+  if (path.startsWith('/data') || path.startsWith('/universe')) {
+    return ['data']
+  }
+  if (
+    path.startsWith('/factors') ||
+    path.startsWith('/factor-matrix') ||
+    path.startsWith('/screener') ||
+    path.startsWith('/indicators')
+  ) {
+    return ['research']
+  }
+  if (path.startsWith('/strategies') || path.startsWith('/portfolio')) {
+    return ['strategy']
+  }
+  if (
+    path.startsWith('/backtest') ||
+    path.startsWith('/sweep') ||
+    path.startsWith('/results')
+  ) {
+    return ['backtest']
+  }
+  return []
+}
 
 export default function LayoutShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = theme.useToken()
+  const [openKeys, setOpenKeys] = useState<string[]>(() => openGroupFor(location.pathname))
+
+  useEffect(() => {
+    setOpenKeys(openGroupFor(location.pathname))
+  }, [location.pathname])
 
   return (
     <QueryClientProvider client={queryClient}>
       <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#1677ff' } }}>
         <Layout style={{ minHeight: '100vh' }}>
-          <Sider width={200} style={{ background: token.colorBgContainer }}>
+          <Sider width={224} style={{ background: token.colorBgContainer }}>
             <div style={{ height: 56, padding: 16, fontSize: 18, fontWeight: 700, color: token.colorPrimary }}>
               Djinn 量化回测
             </div>
             <Menu
               mode="inline"
-              selectedKeys={[location.pathname]}
+              selectedKeys={[selectedKeyFor(location.pathname)]}
+              openKeys={openKeys}
+              onOpenChange={(keys) => setOpenKeys(keys as string[])}
               items={menuItems}
-              onClick={({ key }) => navigate(key)}
+              onClick={({ key }) => {
+                if (key.startsWith('/')) navigate(key)
+              }}
               style={{ borderRight: 0 }}
             />
           </Sider>

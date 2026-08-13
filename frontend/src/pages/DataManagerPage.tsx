@@ -1,12 +1,23 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
 import { fetchData, listCache, clearCache, getCacheContent } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import type { CacheEntry, Profile } from '@/types'
 
 const { RangePicker } = DatePicker
+
+/** 缓存文件按 ``{provider}::{dtype}::{key}::{adjust}`` 命名,取第二段为类型。 */
+function dtypeOf(file: string): string {
+  return file.split('::')[1] || 'other'
+}
+
+const DTYPE_LABEL: Record<string, string> = {
+  quote: '行情',
+  fundamental: '基本面',
+  universe: '股票池',
+}
 
 export default function DataManagerPage() {
   const qc = useQueryClient()
@@ -18,6 +29,17 @@ export default function DataManagerPage() {
     queryKey: ['cache'],
     queryFn: listCache,
   })
+  const entries = (cache?.entries || []) as CacheEntry[]
+  const dtypeCounts: Record<string, number> = {}
+  for (const e of entries) {
+    const d = dtypeOf(e.file)
+    dtypeCounts[d] = (dtypeCounts[d] || 0) + 1
+  }
+  const dtypeTabs = [
+    { key: 'quote', label: `行情 (${dtypeCounts.quote || 0})` },
+    { key: 'fundamental', label: `基本面 (${dtypeCounts.fundamental || 0})` },
+    { key: 'universe', label: `股票池 (${dtypeCounts.universe || 0})` },
+  ]
 
   const { data: content } = useQuery({
     queryKey: ['cache-content', selectedFile],
@@ -54,6 +76,10 @@ export default function DataManagerPage() {
   }
 
   const cacheColumns = [
+    {
+      title: '类型', key: 'dtype', width: 90,
+      render: (_: unknown, r: CacheEntry) => <Tag>{DTYPE_LABEL[dtypeOf(r.file)] || dtypeOf(r.file)}</Tag>,
+    },
     { title: '文件', dataIndex: 'file', key: 'file', ellipsis: true },
     { title: '行数', dataIndex: 'rows', key: 'rows' },
     { title: '起始', dataIndex: 'start', key: 'start' },
@@ -137,12 +163,20 @@ export default function DataManagerPage() {
         title="缓存状态"
         extra={<Button danger onClick={() => clearMut.mutate()} loading={clearMut.isPending}>清空缓存</Button>}
       >
-        <Table
-          columns={cacheColumns}
-          dataSource={(cache?.entries || []) as CacheEntry[]}
-          rowKey="file"
-          size="small"
-          pagination={false}
+        <Tabs
+          items={dtypeTabs.map((t) => ({
+            key: t.key,
+            label: t.label,
+            children: (
+              <Table
+                columns={cacheColumns}
+                dataSource={entries.filter((e) => dtypeOf(e.file) === t.key)}
+                rowKey="file"
+                size="small"
+                pagination={{ pageSize: 20, showSizeChanger: true }}
+              />
+            ),
+          }))}
         />
       </Card>
 

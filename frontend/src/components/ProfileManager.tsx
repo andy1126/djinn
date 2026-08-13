@@ -19,7 +19,7 @@ const MARKET_OPTIONS = [
 
 const MARKET_LABEL: Record<string, string> = { US: '美股', CN: 'A股', HK: '港股' }
 
-export default function ProfilesPage() {
+export default function ProfileManager() {
   const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
   const [editing, setEditing] = useState<Profile | null>(null)
@@ -105,7 +105,7 @@ export default function ProfilesPage() {
   ]
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+    <>
       <Card
         title="标的 Profile"
         extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建 Profile</Button>}
@@ -148,6 +148,6 @@ export default function ProfilesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Space>
+    </>
   )
 }

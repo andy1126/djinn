@@ -1,18 +1,21 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Typography,
+  Alert, Button, Card, Collapse, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Tooltip, Typography,
 } from 'antd'
+import { QuestionCircleOutlined } from '@ant-design/icons'
 import {
   listFactors,
+  listIndexes,
   createFactorAnalysis,
   listFactorAnalyses,
   getFactorAnalysisJob,
   getFactorAnalysisReport,
 } from '@/api/client'
-import type { FactorInfo, JobStatus, ParamSchema } from '@/types'
+import type { FactorInfo, IndexInfo, JobStatus, ParamSchema } from '@/types'
 import QuantileCurveChart from '@/components/charts/QuantileCurveChart'
 import ICBarChart from '@/components/charts/ICBarChart'
+import { IC_RANGE_HELP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
 
@@ -70,6 +73,16 @@ function paramWidget(p: ParamSchema, value: any, onSet: (v: any) => void) {
   )
 }
 
+function MetricTag({ label, value, tip }: { label: string; value: string; tip: string }) {
+  return (
+    <Tooltip title={tip}>
+      <Tag style={{ cursor: 'help', userSelect: 'none' }}>
+        {label}: {value} <QuestionCircleOutlined style={{ color: '#bbb' }} />
+      </Tag>
+    </Tooltip>
+  )
+}
+
 /**
  * 因子分析页:选择因子 + 标的池 + 区间 → 后台任务 → IC / 分层 / 衰减报告。
  */
@@ -86,6 +99,26 @@ export default function FactorAnalysisPage() {
     queryFn: listFactors,
   })
   const factors: FactorInfo[] = factorsResp?.factors || []
+
+  const { data: indexesResp } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
+  const indexes: IndexInfo[] = indexesResp?.indexes || []
+  const indexByKey = useMemo(() => {
+    const m: Record<string, IndexInfo> = {}
+    for (const i of indexes) m[i.key] = i
+    return m
+  }, [indexes])
+  const indexOptions = indexes.map((i) => ({ value: i.key, label: `${i.key} · ${i.name}` }))
+  const watchIndex = Form.useWatch('index', form)
+  const indexMarket = watchIndex ? indexByKey[watchIndex]?.market : undefined
+  const isValuation = (f: FactorInfo) => f.category === 'value' || f.category === 'size'
+  const factorOptions = factors.map((f) => {
+    const blocked = indexMarket === 'CN' && isValuation(f)
+    return {
+      value: f.name,
+      label: blocked ? `${f.name} (${f.category}) · A股估值源暂不可达` : `${f.name} (${f.category})`,
+      disabled: blocked,
+    }
+  })
 
   const { data: historyJobs } = useQuery({
     queryKey: ['factor-analysis-jobs'],
@@ -130,10 +163,12 @@ export default function FactorAnalysisPage() {
   })
 
   const onSubmit = (v: FormValues) => {
+    const idx = indexes.find((i) => i.key === v.index)
     mut.mutate({
       factor: v.factor,
       params,
       index: v.index || null,
+      market: idx?.market ?? null,
       start: v.range[0].toISOString().slice(0, 10),
       end: v.range[1].toISOString().slice(0, 10),
       ic_method: v.ic_method,
@@ -161,7 +196,7 @@ export default function FactorAnalysisPage() {
                 setSelected(factors.find((f) => f.name === name) || null)
                 setParams({})
               }}
-              options={factors.map((f) => ({ value: f.name, label: `${f.name} (${f.category})` }))}
+              options={factorOptions}
             />
           </Form.Item>
 
@@ -174,8 +209,17 @@ export default function FactorAnalysisPage() {
           )}
 
           <Form.Item name="index" label="宽基指数">
-            <Select options={['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500', 'NASDAQ100', 'DOWJONES'].map((k) => ({ value: k, label: k }))} />
+            <Select options={indexOptions} showSearch optionFilterProp="label" />
           </Form.Item>
+          {indexMarket === 'CN' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="A 股估值因子暂不可用"
+              description="A 股估值源(东财)当前网络不可达,故 ep/bp/sp/size 等估值类因子无法计算;可换美股/港股指数使用估值因子,或改用财务/行情类因子。"
+            />
+          )}
           <Form.Item name="range" label="回测区间" rules={[{ required: true, message: '请选择区间' }]}>
             <RangePicker />
           </Form.Item>
@@ -208,13 +252,41 @@ export default function FactorAnalysisPage() {
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Card title={`IC 汇总 · ${report.factor_name}`}>
             <Space size="large" wrap>
-              <Tag>IC 均值: {(report.ic_summary.ic_mean ?? 0).toFixed(4)}</Tag>
-              <Tag>ICIR: {(report.ic_summary.icir ?? 0).toFixed(4)}</Tag>
-              <Tag>IC 正值占比: {((report.ic_summary.ic_pos_ratio ?? 0) * 100).toFixed(1)}%</Tag>
-              <Tag>单调性: {(report.monotonicity ?? 0).toFixed(3)}</Tag>
-              <Tag>换手: {(report.turnover ?? 0).toFixed(3)}</Tag>
+              <MetricTag label="IC 均值" value={(report.ic_summary.ic_mean ?? 0).toFixed(4)} tip={METRIC_TIP['IC 均值']} />
+              <MetricTag label="ICIR" value={(report.ic_summary.icir ?? 0).toFixed(4)} tip={METRIC_TIP['ICIR']} />
+              <MetricTag label="IC 正值占比" value={`${((report.ic_summary.ic_pos_ratio ?? 0) * 100).toFixed(1)}%`} tip={METRIC_TIP['IC 正值占比']} />
+              <MetricTag label="单调性" value={(report.monotonicity ?? 0).toFixed(3)} tip={METRIC_TIP['单调性']} />
+              <MetricTag label="换手" value={(report.turnover ?? 0).toFixed(3)} tip={METRIC_TIP['换手']} />
             </Space>
           </Card>
+          <Collapse
+            size="small"
+            items={[{
+              key: 'help',
+              label: <Space size={4}><QuestionCircleOutlined />指标说明(IC 区间含义)</Space>,
+              children: (
+                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                  <div>
+                    <Typography.Text strong>IC 区间经验参考(秩相关、截面)</Typography.Text>
+                    <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                      {IC_RANGE_HELP.map((r) => (
+                        <li key={r.range}><Typography.Text code>{r.range}</Typography.Text> — {r.meaning}</li>
+                      ))}
+                    </ul>
+                    <Typography.Text type="secondary">符号:正 = 因子值越大、未来收益越高;负 = 相反。</Typography.Text>
+                  </div>
+                  <div>
+                    <Typography.Text strong>其他指标</Typography.Text>
+                    <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                      {Object.entries(METRIC_TIP).map(([term, desc]) => (
+                        <li key={term}><Typography.Text strong>{term}</Typography.Text>: {desc}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </Space>
+              ),
+            }]}
+          />
           <Card title="IC 时序">
             <ICBarChart ic={report.ic} />
           </Card>

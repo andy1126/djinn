@@ -1,17 +1,20 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Typography,
+  Alert, Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Tooltip, Typography,
 } from 'antd'
+import { QuestionCircleOutlined } from '@ant-design/icons'
 import {
   listFactors,
+  listIndexes,
   createFactorMatrix,
   listFactorMatrices,
   getFactorMatrixJob,
   getFactorMatrixReport,
 } from '@/api/client'
-import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, JobStatus, ParamSchema } from '@/types'
+import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, IndexInfo, JobStatus, ParamSchema } from '@/types'
 import MatrixHeatmap from '@/components/charts/MatrixHeatmap'
+import { CORR_MATRIX_TIP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
 
@@ -75,6 +78,15 @@ function paramWidget(p: ParamSchema, value: any, onSet: (v: any) => void) {
 
 let _uid = 0
 
+/** 带 tooltip 的表头文本(悬停显示指标含义)。 */
+function HelpTitle({ text, tip }: { text: string; tip: string }) {
+  return (
+    <Tooltip title={tip}>
+      <Space size={4} style={{ cursor: 'help' }}>{text} <QuestionCircleOutlined style={{ color: '#bbb' }} /></Space>
+    </Tooltip>
+  )
+}
+
 /**
  * 多因子诊断页:选 2~8 个因子 + 权重 + 方向 → 后台任务 → 相关矩阵热力图 + 每因子 IC 汇总。
  */
@@ -90,6 +102,26 @@ export default function FactorMatrixPage() {
     queryFn: listFactors,
   })
   const factors: FactorInfo[] = factorsResp?.factors || []
+
+  const { data: indexesResp } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
+  const indexes: IndexInfo[] = indexesResp?.indexes || []
+  const indexByKey = useMemo(() => {
+    const m: Record<string, IndexInfo> = {}
+    for (const i of indexes) m[i.key] = i
+    return m
+  }, [indexes])
+  const indexOptions = indexes.map((i) => ({ value: i.key, label: `${i.key} · ${i.name}` }))
+  const watchIndex = Form.useWatch('index', form)
+  const indexMarket = watchIndex ? indexByKey[watchIndex]?.market : undefined
+  const isValuation = (f: FactorInfo) => f.category === 'value' || f.category === 'size'
+  const factorOptions = factors.map((f) => {
+    const blocked = indexMarket === 'CN' && isValuation(f)
+    return {
+      value: f.name,
+      label: blocked ? `${f.name} (${f.category}) · A股估值源暂不可达` : `${f.name} (${f.category})`,
+      disabled: blocked,
+    }
+  })
 
   const { data: historyJobs } = useQuery({
     queryKey: ['factor-matrix-jobs'],
@@ -134,6 +166,11 @@ export default function FactorMatrixPage() {
 
   const addFactor = (name?: string) => {
     if (!name) return
+    const info = factors.find((f) => f.name === name)
+    if (indexMarket === 'CN' && info && isValuation(info)) {
+      message.warning('A 股估值源(东财)暂不可达,该估值因子暂不可用')
+      return
+    }
     if (drafts.some((d) => d.factor === name)) {
       message.warning('该因子已添加')
       return
@@ -163,6 +200,7 @@ export default function FactorMatrixPage() {
         params: d.params,
       })),
       index: v.index || null,
+      market: indexes.find((i) => i.key === v.index)?.market ?? null,
       start: v.range[0].toISOString().slice(0, 10),
       end: v.range[1].toISOString().slice(0, 10),
       ic_method: v.ic_method,
@@ -189,48 +227,50 @@ export default function FactorMatrixPage() {
 
       <Card title="因子选择(2~8 个)">
         <Space direction="vertical" style={{ width: '100%' }} size="small">
-          {drafts.map((d) => (
-            <Card key={d.uid} size="small" title={d.factor}>
-              <Space wrap>
-                <span>权重:</span>
-                <InputNumber
-                  min={0}
-                  step={0.1}
-                  value={d.weight}
-                  onChange={(v) => update(d.uid, { weight: v ?? 1 })}
-                />
-                <span>方向:</span>
-                <Select
-                  value={d.direction}
-                  onChange={(v) => update(d.uid, { direction: v as 1 | -1 })}
-                  options={[{ value: 1, label: '多(+1)' }, { value: -1, label: '空(-1)' }]}
-                  style={{ width: 100 }}
-                />
-                <Button danger onClick={() => removeFactor(d.uid)}>删除</Button>
-              </Space>
-              {(() => {
-                const info = factors.find((f) => f.name === d.factor)
-                if (info && info.params.length > 0) {
-                  return (
-                    <Card size="small" style={{ marginTop: 8 }} title={`${d.factor} 参数`}>
-                      {info.params.map((p) =>
-                        paramWidget(p, d.params[p.name], (val) =>
-                          update(d.uid, { params: { ...d.params, [p.name]: val } }),
-                        ),
-                      )}
-                    </Card>
-                  )
-                }
-                return null
-              })()}
-            </Card>
-          ))}
+          {drafts.map((d) => {
+            const info = factors.find((f) => f.name === d.factor)
+            const cnBlocked = indexMarket === 'CN' && !!info && isValuation(info)
+            return (
+              <Card
+                key={d.uid}
+                size="small"
+                title={<Space size={4}>{d.factor}{cnBlocked && <Tag color="warning">A股估值源不可用</Tag>}</Space>}
+              >
+                <Space wrap>
+                  <span>权重:</span>
+                  <InputNumber
+                    min={0}
+                    step={0.1}
+                    value={d.weight}
+                    onChange={(v) => update(d.uid, { weight: v ?? 1 })}
+                  />
+                  <span>方向:</span>
+                  <Select
+                    value={d.direction}
+                    onChange={(v) => update(d.uid, { direction: v as 1 | -1 })}
+                    options={[{ value: 1, label: '多(+1)' }, { value: -1, label: '空(-1)' }]}
+                    style={{ width: 100 }}
+                  />
+                  <Button danger onClick={() => removeFactor(d.uid)}>删除</Button>
+                </Space>
+                {info && info.params.length > 0 && (
+                  <Card size="small" style={{ marginTop: 8 }} title={`${d.factor} 参数`}>
+                    {info.params.map((p) =>
+                      paramWidget(p, d.params[p.name], (val) =>
+                        update(d.uid, { params: { ...d.params, [p.name]: val } }),
+                      ),
+                    )}
+                  </Card>
+                )}
+              </Card>
+            )
+          })}
           <Select
             placeholder="选择并添加因子"
             loading={factorsLoading}
             style={{ width: 300 }}
             onChange={(name) => addFactor(name as string)}
-            options={factors.map((f) => ({ value: f.name, label: `${f.name} (${f.category})` }))}
+            options={factorOptions}
             showSearch
             optionFilterProp="label"
           />
@@ -245,8 +285,17 @@ export default function FactorMatrixPage() {
           initialValues={{ index: 'CSI300', ic_method: 'spearman' }}
         >
           <Form.Item name="index" label="宽基指数">
-            <Select options={['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500', 'NASDAQ100', 'DOWJONES'].map((k) => ({ value: k, label: k }))} />
+            <Select options={indexOptions} showSearch optionFilterProp="label" />
           </Form.Item>
+          {indexMarket === 'CN' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="A 股估值因子暂不可用"
+              description="A 股估值源(东财)当前网络不可达,故 ep/bp/sp/size 等估值类因子无法计算;可换美股/港股指数使用估值因子,或改用财务/行情类因子。"
+            />
+          )}
           <Form.Item name="range" label="区间" rules={[{ required: true, message: '请选择区间' }]}>
             <RangePicker />
           </Form.Item>
@@ -280,7 +329,7 @@ export default function FactorMatrixPage() {
 
       {report && (
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Card title="因子两两相关矩阵">
+          <Card title={<HelpTitle text="因子两两相关矩阵" tip={CORR_MATRIX_TIP} />}>
             <MatrixHeatmap matrix={report.correlation} height={460} />
           </Card>
           <Card title="各因子 IC 汇总">
@@ -292,15 +341,15 @@ export default function FactorMatrixPage() {
                 { title: '期', dataIndex: 'period', key: 'period', width: 80 },
                 { title: '因子', dataIndex: 'factor', key: 'factor' },
                 {
-                  title: 'IC 均值', dataIndex: 'ic_mean', key: 'ic_mean',
+                  title: <HelpTitle text="IC 均值" tip={METRIC_TIP['IC 均值']} />, dataIndex: 'ic_mean', key: 'ic_mean',
                   render: (v: number) => (v ?? 0).toFixed(4),
                 },
                 {
-                  title: 'ICIR', dataIndex: 'icir', key: 'icir',
+                  title: <HelpTitle text="ICIR" tip={METRIC_TIP['ICIR']} />, dataIndex: 'icir', key: 'icir',
                   render: (v: number) => (v ?? 0).toFixed(4),
                 },
                 {
-                  title: 'IC 正值占比', dataIndex: 'ic_pos_ratio', key: 'ic_pos_ratio',
+                  title: <HelpTitle text="IC 正值占比" tip={METRIC_TIP['IC 正值占比']} />, dataIndex: 'ic_pos_ratio', key: 'ic_pos_ratio',
                   render: (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`,
                 },
               ]}
@@ -314,7 +363,7 @@ export default function FactorMatrixPage() {
               columns={[
                 { title: '因子', dataIndex: 'factor', key: 'factor' },
                 {
-                  title: '换手率', dataIndex: 'turnover', key: 'turnover',
+                  title: <HelpTitle text="换手率" tip={METRIC_TIP['换手']} />, dataIndex: 'turnover', key: 'turnover',
                   render: (v: number) => (v ?? 0).toFixed(3),
                 },
               ]}

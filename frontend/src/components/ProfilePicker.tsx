@@ -12,7 +12,7 @@ interface Props {
 
 /**
  * profile 快速选择下拉:选中后把 profile 的标的(及可选市场)交给调用方。
- * 旁边附「管理」按钮跳转到 /profiles。
+ * 旁边附「管理」按钮跳转到股票池的 Profile 管理 tab。
  */
 export default function ProfilePicker({ onSelect, placeholder = '从 Profile 载入标的' }: Props) {
   const navigate = useNavigate()
@@ -41,7 +41,7 @@ export default function ProfilePicker({ onSelect, placeholder = '从 Profile 载
         allowClear
       />
       <Tooltip title="管理 Profile">
-        <Button icon={<SettingOutlined />} onClick={() => navigate('/profiles')} />
+        <Button icon={<SettingOutlined />} onClick={() => navigate('/universe?tab=profile')} />
       </Tooltip>
     </Space.Compact>
   )

@@ -1,16 +1,24 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Button, Card, DatePicker, Form, Input, InputNumber, message, Progress, Select, Space, Tag, Typography,
+  Alert, Button, Card, DatePicker, Form, Input, InputNumber, message, Progress, Select, Space, Table, Tag, Typography,
 } from 'antd'
-import { listFactors, listIndexes, createScreen, getScreenJob } from '@/api/client'
-import type { FactorInfo } from '@/types'
+import {
+  listFactors,
+  listIndexes,
+  listScreenFields,
+  listScreenMarkets,
+  listScreenJobs,
+  createScreen,
+  getScreenJob,
+} from '@/api/client'
+import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket } from '@/types'
 
-const { RangePicker } = DatePicker
 const OPS = ['gt', 'lt', 'ge', 'le', 'eq', 'between', 'in']
 
 /**
  * 选股页:条件过滤 + 可选多因子打分排序 → 后台任务 → 股票列表 + 得分。
+ * 市场由所选宽基指数推断(不再单独选);历史任务可回看(刷新不丢失)。
  */
 export default function ScreenerPage() {
   const qc = useQueryClient()
@@ -24,6 +32,36 @@ export default function ScreenerPage() {
   const { data: factorsResp } = useQuery({ queryKey: ['factors'], queryFn: listFactors })
   const factors: FactorInfo[] = factorsResp?.factors || []
   const { data: indexesResp } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
+  const indexes: IndexInfo[] = useMemo(() => indexesResp?.indexes || [], [indexesResp])
+
+  const { data: fieldsResp } = useQuery({ queryKey: ['screen-fields'], queryFn: listScreenFields })
+  const screenFields: ScreenField[] = fieldsResp?.fields || []
+  const fieldGroups = [
+    {
+      label: '估值字段',
+      options: screenFields.filter((f) => f.group === 'valuation').map((f) => ({ value: f.name, label: f.label })),
+    },
+    {
+      label: '财务字段',
+      options: screenFields.filter((f) => f.group === 'financial').map((f) => ({ value: f.name, label: f.label })),
+    },
+  ]
+
+  const { data: marketsResp } = useQuery({ queryKey: ['screen-markets'], queryFn: listScreenMarkets })
+  const screenMarkets: ScreenMarket[] = marketsResp?.markets || []
+  const marketAvailable = useMemo(() => {
+    const m: Record<string, boolean> = {}
+    for (const x of screenMarkets) m[x.market] = x.available
+    return m
+  }, [screenMarkets])
+  const indexOptions = indexes.map((i) => {
+    const avail = marketAvailable[i.market] ?? true
+    return {
+      value: i.key,
+      label: avail ? `${i.key} · ${i.name}` : `${i.key} · ${i.name}(暂不可用)`,
+      disabled: !avail,
+    }
+  })
 
   const [form] = Form.useForm()
 
@@ -38,18 +76,29 @@ export default function ScreenerPage() {
   })
   const job = poll.data as any
 
+  const { data: historyJobs } = useQuery({
+    queryKey: ['screen-jobs'],
+    queryFn: () => listScreenJobs(20),
+    refetchInterval: (query) => {
+      const data = query.state.data as JobStatus[] | undefined
+      return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
+    },
+  })
+
   const mut = useMutation({
     mutationFn: createScreen,
     onSuccess: (resp) => {
       setJobId(resp.job_id)
       message.success(`选股任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['screen-job', resp.job_id] })
+      qc.invalidateQueries({ queryKey: ['screen-jobs'] })
     },
     onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
   })
 
   const onSubmit = (v: any) => {
-    const range = v.range as [Date, Date] | undefined
+    const when = v.when as Date | undefined
+    const idx = indexes.find((i) => i.key === v.index)
     mut.mutate({
       conditions: conditions
         .filter((c) => c.field.trim() && c.value.trim())
@@ -68,8 +117,8 @@ export default function ScreenerPage() {
       scores: scores.filter((s) => s.factor && s.weight),
       top_n: scores.length ? topN : null,
       index: v.index || null,
-      market: v.market || null,
-      when: range ? range[0].toISOString().slice(0, 10) : null,
+      market: idx?.market ?? null,
+      when: when ? when.toISOString().slice(0, 10) : null,
       lookback_days: 120,
     })
   }
@@ -79,34 +128,34 @@ export default function ScreenerPage() {
       <Typography.Title level={3}>选股</Typography.Title>
 
       <Card title="候选池 + 条件 + 打分">
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={onSubmit}
-          initialValues={{ index: 'CSI300', market: 'CN' }}
-        >
-          <Form.Item name="index" label="宽基指数">
-            <Select
-              options={(indexesResp?.indexes || []).map((i) => ({ value: i.key, label: `${i.key} · ${i.name}` }))}
-            />
+        <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ index: 'SP500' }}>
+          <Form.Item name="index" label="宽基指数(市场由指数推断)">
+            <Select options={indexOptions} showSearch optionFilterProp="label" />
           </Form.Item>
-          <Form.Item name="market" label="市场">
-            <Select options={['CN', 'HK', 'US'].map((m) => ({ value: m, label: m }))} />
-          </Form.Item>
-          <Form.Item name="range" label="截面日期(留空表示最近交易日)">
+          <Form.Item name="when" label="截面日期(留空表示最近交易日)">
             <DatePicker style={{ width: 200 }} />
           </Form.Item>
 
           {/* 条件过滤器 */}
           <Typography.Text strong>筛选条件(取交集)</Typography.Text>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 8 }}
+            message="筛选字段说明"
+            description="估值字段(pe/pb/ps/市值)与财务字段(roe/毛利率/营收同比/净利同比等)取自不同数据源,数值单位见各字段名称。结果为空时可放宽条件或换指数重试。"
+          />
           <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
             {conditions.map((c, i) => (
               <Space key={i}>
-                <Input
-                  placeholder="字段(如 pe)"
-                  value={c.field}
-                  onChange={(e) => setConditions((arr) => arr.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))}
-                  style={{ width: 140 }}
+                <Select
+                  placeholder="选择字段"
+                  value={c.field || undefined}
+                  onChange={(v) => setConditions((arr) => arr.map((x, j) => (j === i ? { ...x, field: v } : x)))}
+                  options={fieldGroups}
+                  showSearch
+                  optionFilterProp="label"
+                  style={{ width: 180 }}
                 />
                 <Select
                   value={c.op}
@@ -194,13 +243,52 @@ export default function ScreenerPage() {
       {jobId && job?.status === 'done' && job.result && (
         <Card title={`选股结果 · ${job.result.count} 只`}>
           <Space direction="vertical" style={{ width: '100%' }}>
-            <Typography.Text>得分降序(若有打分因子):</Typography.Text>
-            <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 400, overflow: 'auto' }}>
-              {JSON.stringify(job.result.results, null, 2)}
-            </pre>
+            {job.result.count === 0 ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="没有标的通过筛选"
+                description="可能原因:条件过严、字段值缺失,或截面日期无数据。可放宽条件、改选财务字段,或换指数重试。"
+              />
+            ) : (
+              <Typography.Text>得分降序(若有打分因子):</Typography.Text>
+            )}
+            {job.result.count > 0 && (
+              <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 400, overflow: 'auto' }}>
+                {JSON.stringify(job.result.results, null, 2)}
+              </pre>
+            )}
           </Space>
         </Card>
       )}
+
+      <Card title="历史选股任务">
+        <Table
+          columns={[
+            {
+              title: '任务', key: 'job_id',
+              render: (_: any, r: JobStatus) => (
+                <Space direction="vertical" size={0}>
+                  <span>{r.title || r.job_id}</span>
+                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
+                </Space>
+              ),
+            },
+            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
+            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
+            { title: '阶段', dataIndex: 'stage', key: 'stage' },
+            {
+              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
+                <Button size="small" onClick={() => setJobId(r.job_id)}>查看</Button>
+              ),
+            },
+          ]}
+          dataSource={(historyJobs || []) as JobStatus[]}
+          rowKey="job_id"
+          size="small"
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
     </Space>
   )
 }

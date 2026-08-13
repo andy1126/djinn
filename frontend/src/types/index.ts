@@ -434,6 +434,29 @@ export interface ScreenResultRow {
   [key: string]: number | string | boolean | null
 }
 
+export interface ScreenField {
+  name: string
+  label: string
+  kind: 'number' | 'string'
+  group: 'valuation' | 'financial'
+  description: string
+}
+
+export interface ScreenFieldsResponse {
+  fields: ScreenField[]
+}
+
+export interface ScreenMarket {
+  market: string
+  label: string
+  available: boolean
+  reason: string
+}
+
+export interface ScreenMarketsResponse {
+  markets: ScreenMarket[]
+}
+
 // ── 股票池 ─────────────────────────────────────────────
 export interface UniverseStock {
   symbol: string
@@ -519,8 +542,46 @@ export interface StockDetail {
   float_cap: number | null
   roe: number | null
   gross_margin: number | null
+  revenue: number | null
+  net_profit: number | null
   revenue_yoy: number | null
   profit_yoy: number | null
+  profile: StockProfile | null
+}
+
+export interface StockProfile {
+  forward_pe: number | null
+  eps_ttm: number | null
+  forward_eps: number | null
+  peg_ratio: number | null
+  book_value: number | null
+  enterprise_value: number | null
+  ev_to_ebitda: number | null
+  beta: number | null
+  operating_margin: number | null
+  profit_margin: number | null
+  return_on_assets: number | null
+  current_ratio: number | null
+  quick_ratio: number | null
+  debt_to_equity: number | null
+  total_cash: number | null
+  total_debt: number | null
+  free_cashflow: number | null
+  fifty_two_week_high: number | null
+  fifty_two_week_low: number | null
+  fifty_day_avg: number | null
+  two_hundred_day_avg: number | null
+  target_mean_price: number | null
+  target_high_price: number | null
+  target_low_price: number | null
+  number_of_analysts: number | null
+  dividend_rate: number | null
+  dividend_yield: number | null
+  sector: string | null
+  industry: string | null
+  recommendation: string | null
+  website: string | null
+  summary: string | null
 }
 
 // ── 多因子诊断 ─────────────────────────────────────────

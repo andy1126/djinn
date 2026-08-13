@@ -1,21 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
-import { createBacktest, subscribeProgress } from '@/api/client'
+import { createBacktest, listStrategies, subscribeProgress } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
+import StrategyParamForm from '@/components/StrategyParamForm'
 import { useConfigStore } from '@/store/configStore'
-import type { BacktestConfig, JobStatus, Profile } from '@/types'
+import type { BacktestConfig, JobStatus, Profile, StrategyInfo } from '@/types'
 
 const { RangePicker } = DatePicker
 
 export default function BacktestRunPage() {
   const navigate = useNavigate()
-  const { config, setConfig } = useConfigStore()
+  const { config, setConfig, updateConfig } = useConfigStore()
   const [form] = Form.useForm()
   const [jobId, setJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<JobStatus | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+
+  const { data: strategiesResp } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
+  const strategies: StrategyInfo[] = strategiesResp?.strategies || []
+  const selectedStrategy = strategies.find((s) => s.name === config.strategy.name)
+
+  const selectStrategy = (name: string) => {
+    const info = strategies.find((s) => s.name === name)
+    const params: Record<string, number | string | boolean | null> = {}
+    info?.params.forEach((p) => { params[p.name] = p.default })
+    updateConfig('strategy', { name, params })
+  }
 
   useEffect(() => {
     form.setFieldsValue({
@@ -130,16 +143,31 @@ export default function BacktestRunPage() {
                 { label: '不复权', value: 'none' },
               ]} />
             </Form.Item>
-            <Form.Item label="策略">
-              <Space>
-                <span>{config.strategy.name}</span>
-                <Button size="small" onClick={() => navigate('/strategies')}>修改策略</Button>
-              </Space>
-            </Form.Item>
             <Form.Item>
               <Button type="primary" htmlType="submit">开始回测</Button>
             </Form.Item>
           </Form>
+        </Card>
+
+        <Card title="策略" style={{ marginTop: 16 }}>
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Select
+              style={{ width: '100%' }}
+              value={config.strategy.name}
+              onChange={selectStrategy}
+              options={strategies.map((s) => ({ value: s.name, label: s.name }))}
+              showSearch
+              optionFilterProp="label"
+            />
+            {selectedStrategy && selectedStrategy.params.length > 0 && (
+              <StrategyParamForm
+                schema={selectedStrategy.params}
+                value={config.strategy.params}
+                onChange={(params) => updateConfig('strategy', { name: selectedStrategy.name, params })}
+              />
+            )}
+            <Button size="small" onClick={() => navigate('/strategies')}>配置策略(编辑代码)</Button>
+          </Space>
         </Card>
       </Col>
 

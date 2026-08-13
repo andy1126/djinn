@@ -21,6 +21,8 @@ import type {
   Profile,
   ProfileCreate,
   ProfileUpdate,
+  ScreenFieldsResponse,
+  ScreenMarketsResponse,
   ScreenRequest,
   StockDetail,
   StrategyListResponse,
@@ -185,6 +187,15 @@ export const getFactorMatrixReport = async (jobId: string): Promise<FactorMatrix
   (await http.get(`/factor-matrix/${jobId}/report`)).data
 
 // ── 选股 ───────────────────────────────────────────────
+export const listScreenFields = async (): Promise<ScreenFieldsResponse> =>
+  (await http.get('/screens/fields')).data
+
+export const listScreenMarkets = async (): Promise<ScreenMarketsResponse> =>
+  (await http.get('/screens/markets')).data
+
+export const listScreenJobs = async (limit = 20): Promise<JobStatus[]> =>
+  (await http.get(`/screens?limit=${limit}`)).data
+
 export const createScreen = async (req: ScreenRequest): Promise<JobCreated> =>
   (await http.post('/screens', req)).data
 
