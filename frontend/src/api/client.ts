@@ -41,8 +41,14 @@ import type {
 } from '@/types'
 
 // 通过 vite proxy,前缀 /api 转发到 http://localhost:8000
+const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
+// WebSocket 直连后端(默认同主机 8000;跨域部署用 VITE_WS_BASE 覆盖)
+const WS_BASE =
+  import.meta.env.VITE_WS_BASE ??
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000`
+
 const http = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 60000,
 })
 
@@ -259,10 +265,7 @@ export const subscribeProgress = (
   onUpdate: (job: JobStatus) => void,
   onClose?: () => void,
 ): WebSocket => {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  // 通过 vite proxy /ws 转发到后端,但 vite ws proxy 不重写路径
-  // 这里直接用后端地址(开发环境)
-  const url = `${proto}://localhost:8000/backtests/${jobId}/progress`
+  const url = `${WS_BASE}/backtests/${jobId}/progress`
   const ws = new WebSocket(url)
   ws.onmessage = (ev) => {
     try {

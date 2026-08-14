@@ -156,6 +156,7 @@ export interface CostsConfig {
   enforce_price_limit: boolean
   enforce_suspension: boolean
   enforce_lot: boolean
+  fill_ref: 'open' | 'close' | 'vwap'
 }
 
 export interface StrategyConfig {

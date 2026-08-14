@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { BacktestConfig } from '@/types'
 
 // 默认回测配置(美股 NVDA, MACrossover)
@@ -12,6 +13,7 @@ const defaultConfig: BacktestConfig = {
     enforce_price_limit: true,
     enforce_suspension: true,
     enforce_lot: true,
+    fill_ref: 'open',
   },
   strategy: { name: 'MACrossover', params: { fast: 10, slow: 30 } },
   portfolio: {
@@ -32,10 +34,20 @@ interface ConfigStore {
   reset: () => void
 }
 
-export const useConfigStore = create<ConfigStore>((set) => ({
-  config: defaultConfig,
-  setConfig: (cfg) => set({ config: cfg }),
-  updateConfig: (key, value) =>
-    set((state) => ({ config: { ...state.config, [key]: value } })),
-  reset: () => set({ config: defaultConfig }),
-}))
+// F3:persist 到 localStorage,刷新页面配置保留
+export const useConfigStore = create<ConfigStore>()(
+  persist(
+    (set) => ({
+      config: defaultConfig,
+      setConfig: (cfg) => set({ config: cfg }),
+      updateConfig: (key, value) =>
+        set((state) => ({ config: { ...state.config, [key]: value } })),
+      reset: () => set({ config: defaultConfig }),
+    }),
+    {
+      name: 'djinn-config',
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+    },
+  ),
+)

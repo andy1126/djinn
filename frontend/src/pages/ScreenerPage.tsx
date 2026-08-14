@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Button, Card, DatePicker, Form, Input, InputNumber, message, Progress, Select, Space, Table, Tag, Typography,
@@ -12,9 +13,32 @@ import {
   createScreen,
   getScreenJob,
 } from '@/api/client'
+import { useConfigStore } from '@/store/configStore'
 import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket } from '@/types'
 
 const OPS = ['gt', 'lt', 'ge', 'le', 'eq', 'between', 'in']
+
+// 数值格式化:市值类 ≥1e8 显示"x.xx 亿",≥1e4 "x.xx 万"
+function formatCompact(v: number): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  if (Math.abs(v) >= 1e8) return `${(v / 1e8).toFixed(2)} 亿`
+  if (Math.abs(v) >= 1e4) return `${(v / 1e4).toFixed(2)} 万`
+  if (Number.isInteger(v)) return String(v)
+  return v.toFixed(4)
+}
+
+// 结果行 → CSV 字符串(前端 Blob 下载)
+function toCsv(rows: Record<string, unknown>[]): string {
+  if (!rows.length) return ''
+  const keys = Object.keys(rows[0])
+  const esc = (v: unknown): string => {
+    const s = v == null ? '' : String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const header = keys.map(esc).join(',')
+  const body = rows.map((r) => keys.map((k) => esc(r[k])).join(',')).join('\n')
+  return `${header}\n${body}`
+}
 
 /**
  * 选股页:条件过滤 + 可选多因子打分排序 → 后台任务 → 股票列表 + 得分。
@@ -75,6 +99,49 @@ export default function ScreenerPage() {
     },
   })
   const job = poll.data as any
+  const navigate = useNavigate()
+  const config = useConfigStore((s) => s.config)
+  const updateConfig = useConfigStore((s) => s.updateConfig)
+
+  const rows: Record<string, any>[] = job?.result?.results ?? []
+  const fieldLabel = useMemo(() => {
+    const m: Record<string, string> = { score: '综合得分' }
+    for (const f of screenFields) m[f.name] = f.label
+    return m
+  }, [screenFields])
+  const columns = useMemo(() => {
+    if (!rows.length) return []
+    const keys = Object.keys(rows[0]).filter((k) => k !== 'symbol')
+    return [
+      { title: '代码', dataIndex: 'symbol', key: 'symbol', fixed: 'left' as const, width: 120 },
+      ...keys.map((k) => ({
+        title: fieldLabel[k] ?? k,
+        dataIndex: k,
+        key: k,
+        render: (v: any) => (typeof v === 'number' ? formatCompact(v) : (v ?? '—')),
+        sorter: (a: any, b: any) => (a[k] ?? -Infinity) - (b[k] ?? -Infinity),
+      })),
+    ]
+  }, [rows, fieldLabel])
+
+  const exportCsv = () => {
+    const blob = new Blob(['﻿' + toCsv(rows)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `screener-${jobId}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const startBacktest = () => {
+    updateConfig('universe', {
+      ...config.universe,
+      symbols: rows.map((r) => r.symbol),
+      benchmark: null,
+    })
+    navigate('/backtest')
+  }
 
   const { data: historyJobs } = useQuery({
     queryKey: ['screen-jobs'],
@@ -251,12 +318,21 @@ export default function ScreenerPage() {
                 description="可能原因:条件过严、字段值缺失,或截面日期无数据。可放宽条件、改选财务字段,或换指数重试。"
               />
             ) : (
-              <Typography.Text>得分降序(若有打分因子):</Typography.Text>
-            )}
-            {job.result.count > 0 && (
-              <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 400, overflow: 'auto' }}>
-                {JSON.stringify(job.result.results, null, 2)}
-              </pre>
+              <>
+                <Space wrap>
+                  <Button size="small" onClick={exportCsv}>导出 CSV</Button>
+                  <Button size="small" type="primary" onClick={startBacktest}>用这组股票发起回测</Button>
+                  <Typography.Text type="secondary">得分降序(若有打分因子)</Typography.Text>
+                </Space>
+                <Table
+                  dataSource={rows}
+                  columns={columns}
+                  rowKey="symbol"
+                  size="small"
+                  pagination={{ pageSize: 50 }}
+                  scroll={{ x: true }}
+                />
+              </>
             )}
           </Space>
         </Card>

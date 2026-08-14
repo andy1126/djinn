@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
-import { createBacktest, listStrategies, subscribeProgress } from '@/api/client'
+import { createBacktest, listStrategies } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import StrategyParamForm from '@/components/StrategyParamForm'
+import { useJobProgress } from '@/hooks/useJobProgress'
 import { useConfigStore } from '@/store/configStore'
-import type { BacktestConfig, JobStatus, Profile, StrategyInfo } from '@/types'
+import type { BacktestConfig, Profile, StrategyInfo } from '@/types'
 
 const ALLOC_LABEL: Record<string, string> = {
   equal: '等权', market_cap: '市值加权', custom: '自定义', score: '打分',
@@ -24,11 +25,10 @@ const { RangePicker } = DatePicker
 
 export default function BacktestRunPage() {
   const navigate = useNavigate()
-  const { config, setConfig, updateConfig } = useConfigStore()
+  const { config, setConfig, updateConfig, reset } = useConfigStore()
   const [form] = Form.useForm()
   const [jobId, setJobId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<JobStatus | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
+  const { job: progress, via } = useJobProgress(jobId)
 
   const { data: strategiesResp } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
   const strategies: StrategyInfo[] = strategiesResp?.strategies || []
@@ -41,6 +41,7 @@ export default function BacktestRunPage() {
     updateConfig('strategy', { name, params })
   }
 
+  // F3:表单跟随 store 配置(跨页变更同步),依赖 [config] 而非 mount-only
   useEffect(() => {
     form.setFieldsValue({
       symbols: config.universe.symbols.join(','),
@@ -50,7 +51,18 @@ export default function BacktestRunPage() {
       currency: config.account.currency,
       adjust: config.adjust,
     })
-  }, [])
+  }, [config, form])
+
+  // 任务完成 / 失败后的跳转与提示
+  useEffect(() => {
+    if (!progress) return
+    if (progress.status === 'done') {
+      message.success('回测完成')
+      setTimeout(() => navigate(`/results/${progress.job_id}`), 500)
+    } else if (progress.status === 'error') {
+      message.error(`回测失败: ${progress.error}`)
+    }
+  }, [progress?.status])
 
   const syncConfig = (v: any): BacktestConfig => {
     const [start, end] = v.range || []
@@ -74,18 +86,7 @@ export default function BacktestRunPage() {
     try {
       const resp = await createBacktest({ config: cfg })
       setJobId(resp.job_id)
-      setProgress({ job_id: resp.job_id, title: '', status: 'pending', progress: 0, stage: '排队中', error: null, result_path: null })
-      // 订阅 WebSocket 进度
-      wsRef.current?.close()
-      wsRef.current = subscribeProgress(resp.job_id, (job) => {
-        setProgress(job)
-        if (job.status === 'done') {
-          message.success('回测完成')
-          setTimeout(() => navigate(`/results/${job.job_id}`), 500)
-        } else if (job.status === 'error') {
-          message.error(`回测失败: ${job.error}`)
-        }
-      })
+      // 进度订阅交给 useJobProgress(jobId) 处理(含卸载清理与断连降级)
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '创建失败')
     }
@@ -155,7 +156,10 @@ export default function BacktestRunPage() {
               ]} />
             </Form.Item>
             <Form.Item>
-              <Button type="primary" htmlType="submit">开始回测</Button>
+              <Space>
+                <Button type="primary" htmlType="submit">开始回测</Button>
+                <Button onClick={() => { if (confirm('重置为默认配置?')) reset() }}>重置为默认</Button>
+              </Space>
             </Form.Item>
           </Form>
         </Card>
@@ -205,6 +209,9 @@ export default function BacktestRunPage() {
               <Progress percent={Math.round(progress.progress * 100)} status={progress.status === 'error' ? 'exception' : progress.status === 'done' ? 'success' : 'active'} />
               <div>状态: {progress.status}</div>
               <div>阶段: {progress.stage || '—'}</div>
+              {via === 'poll' && (
+                <Alert type="warning" showIcon message="实时连接已断开,已切换轮询" />
+              )}
               {progress.error && <Alert type="error" message={progress.error} />}
               {progress.status === 'done' && (
                 <Button type="primary" onClick={() => navigate(`/results/${jobId}`)}>查看结果</Button>
