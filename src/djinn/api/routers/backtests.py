@@ -133,14 +133,16 @@ async def export_backtest(
         from djinn.config import load_config
 
         cfg = load_config(data=config_dict)
-        result = run_backtest(cfg, registry=provider_registry, with_attribution=True)
+        result = await asyncio.to_thread(
+            run_backtest, cfg, registry=provider_registry, with_attribution=True
+        )
         payload = serialize_report(result.report)
         save(job_id, payload)
     report = rebuild_report(payload)
     output_dir = Path(".cache/exports") / job_id
     output_dir.mkdir(parents=True, exist_ok=True)
     if fmt == "csv":
-        export_csv(report, output_dir)
+        await asyncio.to_thread(export_csv, report, output_dir)
         return {
             "status": "ok",
             "path": str(output_dir),
@@ -148,7 +150,7 @@ async def export_backtest(
         }
     else:
         path = output_dir / "report.xlsx"
-        export_excel(report, path)
+        await asyncio.to_thread(export_excel, report, path)
         return FileResponse(
             path,
             filename=f"{job_id}.xlsx",

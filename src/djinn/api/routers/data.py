@@ -1,5 +1,6 @@
 """数据路由:拉取/缓存/基准。"""
 
+import asyncio
 import math
 from datetime import date, datetime
 from typing import Any
@@ -27,15 +28,23 @@ async def fetch_data(
         # 将 str 转为 date，避免底层 date vs str 比较错误
         start_date = date.fromisoformat(req.start)
         end_date = date.fromisoformat(req.end)
-        results: list[dict[str, Any]] = []
-        for symbol in req.symbols:
+
+        def _fetch_one(symbol: str) -> dict[str, Any]:
             md = registry.get_ohlcv(
                 symbol, start_date, end_date, market=market, adjust=adjust
             )
-            results.append(
-                {"symbol": symbol, "rows": len(md), "start": req.start, "end": req.end}
-            )
-        return {"status": "ok", "fetched": results}
+            return {
+                "symbol": symbol,
+                "rows": len(md),
+                "start": req.start,
+                "end": req.end,
+            }
+
+        # 阻塞的网络拉取放到线程池,避免阻塞事件循环;并发同键受 E1 单飞锁约束
+        results = await asyncio.gather(
+            *(asyncio.to_thread(_fetch_one, s) for s in req.symbols)
+        )
+        return {"status": "ok", "fetched": list(results)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

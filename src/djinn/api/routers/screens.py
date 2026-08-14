@@ -54,6 +54,8 @@ _SCREEN_FIELDS: list[tuple[str, str, Literal["valuation", "financial"], str]] = 
     ("gross_margin", "毛利率", "financial", "毛利 / 营收,单位 %"),
     ("revenue", "营业收入", "financial", "单位:元"),
     ("net_profit", "净利润", "financial", "单位:元"),
+    ("ocf", "经营现金流", "financial", "经营活动现金流净额,单位:元"),
+    ("total_assets", "总资产", "financial", "单位:元"),
     ("revenue_yoy", "营收同比", "financial", "同比增速,单位 %"),
     ("profit_yoy", "净利同比", "financial", "同比增速,单位 %"),
 ]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import queue
 import sqlite3
 import threading
 import uuid
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from djinn.data.provider import DataProvider, ProviderRegistry
+from djinn.utils.exceptions import BacktestCancelled
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -102,6 +104,7 @@ class JobRegistry:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._subscribers: dict[str, list[Callable[[JobRecord], None]]] = {}
+        self._cancel_flags: set[str] = set()  # 请求取消的任务 id(E4)
         self._init_db()
 
     def _conn(self) -> sqlite3.Connection:
@@ -206,6 +209,24 @@ class JobRegistry:
             row = c.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             return self._row_to_rec(row) if row else None
 
+    # ── 取消(E4)────────────────────────────────────────
+    def request_cancel(self, job_id: str) -> bool:
+        """请求取消任务(仅 pending / running 可取消),返回是否受理。"""
+        job = self.get(job_id)
+        if job is None or job.status not in ("pending", "running"):
+            return False
+        with self._lock:
+            self._cancel_flags.add(job_id)
+        return True
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._cancel_flags
+
+    def clear_cancel(self, job_id: str) -> None:
+        with self._lock:
+            self._cancel_flags.discard(job_id)
+
     def list(self, limit: int = 50, kind: str | None = None) -> list[JobRecord]:
         with self._lock, self._conn() as c:
             if kind:
@@ -278,6 +299,7 @@ def run_backtest_job(
             csv_dir=csv_dir,
             registry=provider_registry,
             with_attribution=True,
+            should_stop=lambda: registry.is_cancel_requested(job_id),
         )
         registry.update(job_id, progress=0.8, stage="生成报告")
         report = result.report
@@ -293,6 +315,10 @@ def run_backtest_job(
             stage="完成",
             result={"__meta__": meta, "summary": summary, "symbols": report.symbols},
         )
+        registry.clear_cancel(job_id)
+    except BacktestCancelled:
+        _log.info("回测任务 %s 已取消", job_id)
+        registry.update(job_id, status="cancelled", stage="已取消")
     except Exception as e:
         _log.exception("回测任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
@@ -341,6 +367,8 @@ def run_sweep_job(
         n = len(combos) or 1
         results: list[dict[str, Any]] = []
         for i, c in enumerate(combos):
+            if registry.is_cancel_requested(job_id):
+                raise BacktestCancelled(f"扫描已取消 @组合 {i + 1}/{n}")
             results.append(_run_one(cfg, registry_obj, c, target))
             registry.update(
                 job_id, progress=0.1 + 0.85 * (i + 1) / n, stage=f"扫描 {i + 1}/{n}"
@@ -357,6 +385,10 @@ def run_sweep_job(
             stage="完成",
             result={"__meta__": meta, "results": results, "target": target},
         )
+        registry.clear_cancel(job_id)
+    except BacktestCancelled:
+        log.info("扫描任务 %s 已取消", job_id)
+        registry.update(job_id, status="cancelled", stage="已取消")
     except Exception as e:
         log.exception("扫描任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
@@ -487,6 +519,7 @@ def run_factor_analysis_job(
         fundamentals = _build_fundamental_panels(
             symbols, prices.index, start, end, preg, market
         )
+        factor.validate_inputs(fundamentals, ohlcv)
         factor_panel = factor.compute(prices, ohlcv, fundamentals)
 
         registry.update(job_id, progress=0.7, stage="IC / 分层分析")
@@ -552,6 +585,7 @@ def run_factor_matrix_job(
             params = pt.get("params") or {}
             direction = int(pt.get("direction", 1))
             f = make_factor(name, **params)
+            f.validate_inputs(fundamentals, ohlcv)
             panel = f.compute(prices, ohlcv, fundamentals)
             # direction=-1 → 翻符号(诊断相关用同一口径因子值)
             if direction < 0:
@@ -611,7 +645,10 @@ def _score_symbols(
     fundamentals = _build_fundamental_panels(
         symbols, prices.index, start, when, registry, market
     )
-    data = {f.name: f.compute(prices, ohlcv, fundamentals) for f in factors}
+    data: dict[str, Any] = {}
+    for f in factors:
+        f.validate_inputs(fundamentals, ohlcv)
+        data[f.name] = f.compute(prices, ohlcv, fundamentals)
     idx = prices.index[prices.index <= pd.Timestamp(when)]
     if len(idx) == 0:
         return {}
@@ -745,3 +782,62 @@ def recover_orphaned_jobs(
         except Exception as e:
             _log.error("恢复任务 %s 失败: %s", job.job_id, e)
     return len(orphaned)
+
+
+class JobScheduler:
+    """进程内 FIFO 任务调度:最多 ``max_concurrent`` 个任务并发,其余排队(E5)。
+
+    防止多个大回测并发导致内存爆炸。``max_concurrent`` 默认从 env
+    ``DJINN_MAX_JOBS`` 读(默认 2),可在构造时覆盖。
+    """
+
+    def __init__(
+        self, registry: JobRegistry, max_concurrent: int | None = None
+    ) -> None:
+        self.registry = registry
+        self.max_concurrent = max_concurrent or int(
+            os.environ.get("DJINN_MAX_JOBS", "2")
+        )
+        self._sem = threading.Semaphore(self.max_concurrent)
+        self._queue: queue.Queue[
+            tuple[Callable[..., None], tuple[Any, ...], dict[str, Any]]
+        ] = queue.Queue()
+        self._dispatcher_thread: threading.Thread | None = None
+        self._dispatch_lock = threading.Lock()
+
+    def submit(self, runner: Callable[..., None], *args: Any, **kwargs: Any) -> None:
+        """入队一个任务;dispatcher 线程按 FIFO 取件,受信号量限流。"""
+        self._queue.put((runner, args, kwargs))
+        self._ensure_dispatcher()
+
+    def _ensure_dispatcher(self) -> None:
+        with self._dispatch_lock:
+            if (
+                self._dispatcher_thread is None
+                or not self._dispatcher_thread.is_alive()
+            ):
+                self._dispatcher_thread = threading.Thread(
+                    target=self._dispatch_loop, daemon=True, name="job-scheduler"
+                )
+                self._dispatcher_thread.start()
+
+    def _dispatch_loop(self) -> None:
+        while True:
+            runner, args, kwargs = self._queue.get()
+            self._sem.acquire()
+
+            def _run(
+                runner: Callable[..., None] = runner,
+                args: tuple[Any, ...] = args,
+                kwargs: dict[str, Any] = kwargs,
+            ) -> None:
+                try:
+                    runner(*args, **kwargs)
+                finally:
+                    self._sem.release()
+
+            threading.Thread(
+                target=_run,
+                daemon=True,
+                name=f"job-{args[1] if len(args) > 1 else '?'}",
+            ).start()

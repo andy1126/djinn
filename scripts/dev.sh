@@ -49,7 +49,7 @@ start_backend() {
   fi
   [ -x "$ROOT/.venv/bin/python" ] || die "未找到 .venv,请先 uv pip install -e \".[dev]\""
   nohup .venv/bin/python -m uvicorn djinn.api.main:app \
-    --host 0.0.0.0 --port "$BACKEND_PORT" --reload \
+    --host "${DJINN_HOST:-127.0.0.1}" --port "$BACKEND_PORT" --reload \
     > "$BACKEND_LOG" 2>&1 &
   say "后端启动中 → http://localhost:$BACKEND_PORT(日志 $BACKEND_LOG)"
 }
