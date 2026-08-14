@@ -69,6 +69,39 @@ def test_us_no_stamp_duty():
     assert m.cost("buy", 100, 1000) == m.cost("sell", 100, 1000)
 
 
+def test_hk_stamp_duty_both_sides():
+    """港股印花税双边征收:买入卖出均含印花税,税额相等。"""
+    m = HKCommissionModel(rate=0.0005, min_commission=30.0, stamp_duty_rate=0.001)
+    # amount = 10000 * 10 = 100000;佣金 = max(50, 30) = 50;印花税双边 = 100
+    buy = m.cost("buy", 10, 10000)
+    sell = m.cost("sell", 10, 10000)
+    assert buy == sell == Decimal("150.00")
+    assert buy > 0
+
+
+def test_cn_stamp_duty_sell_only():
+    """A 股印花税仅卖出:买入无印花税。"""
+    m = ChinaCommissionModel(
+        rate=0.0003, min_commission=5.0, stamp_duty_rate=0.001, transfer_fee_rate=0.0
+    )
+    buy = m.cost("buy", 100, 1000)  # 佣金 30,无印花税
+    sell = m.cost("sell", 100, 1000)  # 佣金 30 + 印花税 100
+    assert buy == Decimal("30.00")
+    assert sell == Decimal("130.00")
+
+
+def test_cn_transfer_fee_sh_only():
+    """A 股过户费仅沪市(60/68 开头)收取,深市不收(含后缀剥离)。"""
+    m = ChinaCommissionModel(
+        rate=0.0003, min_commission=5.0, stamp_duty_rate=0.0, transfer_fee_rate=0.00001
+    )
+    # amount = 100000;佣金 = 30;过户费 = 1(仅沪市)
+    assert m.cost("buy", 100, 1000, symbol="600519") == Decimal("31.00")
+    assert m.cost("buy", 100, 1000, symbol="000001") == Decimal("30.00")
+    assert m.cost("buy", 100, 1000, symbol="300750.SZ") == Decimal("30.00")
+    assert m.cost("buy", 100, 1000) == Decimal("30.00")  # 无 symbol 默认不收
+
+
 def test_make_commission_by_market():
     assert isinstance(make_commission(Market.CN), ChinaCommissionModel)
     assert isinstance(make_commission(Market.US), USCommissionModel)

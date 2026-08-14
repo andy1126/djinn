@@ -17,6 +17,7 @@ from djinn.data.schema import (
     COL_MARKET_CAP,
     COL_PB,
     COL_PE,
+    COL_PS,
     COL_REPORT_DATE,
     COL_ROE,
     Market,
@@ -124,6 +125,69 @@ def test_router_snapshot_fills_all_value_columns() -> None:
         assert col in out.columns
 
 
+# ── 日频估值(C2:根治 EP/BP/SP 前视)─────────────────────
+
+
+class _DailyValSource:
+    """提供日频估值序列的假 source(pe 前段 10、后段 20)。"""
+
+    name = "stub"
+
+    def get_snapshot(self, symbols: list[str], when: date, market=None) -> pd.DataFrame:
+        return pd.DataFrame(index=symbols)
+
+    def get_history(
+        self, symbol: str, start: date, end: date, market=None
+    ) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def get_daily_valuation(
+        self, symbol: str, start: date, end: date, market=None
+    ) -> pd.DataFrame:
+        idx = pd.bdate_range(start, end)
+        n = len(idx)
+        pe = [10.0] * (n // 2) + [20.0] * (n - n // 2)
+        return pd.DataFrame({COL_PE: pe}, index=idx)
+
+
+def test_normalize_valuation() -> None:
+    """``stock_a_indicator_lg`` 原始列 → 规范化(pe/pb/ps,index=交易日)。"""
+    from djinn.data.providers.akshare import AkShareProvider
+
+    raw = pd.DataFrame(
+        {
+            "trade_date": ["2024-01-02", "2024-01-03", "2024-01-04"],
+            "pe": [10.0, 11.0, 12.0],
+            "pb": [1.0, 1.1, 1.2],
+            "ps": [2.0, 2.1, 2.2],
+        }
+    )
+    out = AkShareProvider._normalize_valuation(raw)
+    assert set(out.columns) >= {COL_PE, COL_PB, COL_PS}
+    assert isinstance(out.index, pd.DatetimeIndex)
+    assert out[COL_PE].iloc[0] == 10.0
+    assert out[COL_PB].iloc[-1] == 1.2
+    assert out[COL_PS].iloc[1] == 2.1
+
+
+def test_daily_valuation_point_in_time() -> None:
+    """估值字段优先日频序列:前段交易日 pe=10,不被后段 20 前视污染。"""
+    from djinn.factor.engine import FactorEngine
+
+    start, end = date(2024, 1, 2), date(2024, 1, 31)
+    trading_index = pd.DatetimeIndex(pd.bdate_range(start, end))
+    eng = FactorEngine()
+    panels = eng._fundamental_panels(
+        (COL_PE,), ["S"], trading_index, start, end, _DailyValSource(), Market.CN
+    )
+    pe = panels[COL_PE]["S"]
+    half = len(trading_index) // 2
+    assert pe.iloc[0] == 10.0
+    assert pe.iloc[half - 1] == 10.0
+    assert pe.iloc[half] == 20.0
+    assert pe.iloc[-1] == 20.0
+
+
 # ── 真实 akshare(需网络)─────────────────────────────────
 
 
@@ -138,3 +202,17 @@ def test_akshare_fundamentals_snapshot_real() -> None:
     snap = p.get_fundamentals(["000001.SZ", "600519.SH"], date.today())
     assert len(snap) >= 1
     assert snap[COL_MARKET_CAP].dropna().gt(0).any()
+
+
+@pytest.mark.network
+def test_akshare_daily_valuation_real() -> None:
+    pytest.importorskip("akshare")
+    from djinn.data.providers.akshare import AkShareProvider
+
+    p = AkShareProvider()
+    if not p.supports("600519.SH", Market.CN):
+        pytest.skip("akshare 不可用")
+    daily = p.get_daily_valuation("600519.SH", date(2024, 1, 1), date(2024, 1, 31))
+    assert len(daily) > 0
+    assert COL_PE in daily.columns
+    assert daily[COL_PE].dropna().gt(0).any()

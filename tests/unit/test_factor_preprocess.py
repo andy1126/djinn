@@ -85,3 +85,39 @@ def test_neutralize_with_industry() -> None:
     row = neut.iloc[-1]
     assert abs(row[[s for s in syms if industry_map[s] == "tech"]].mean()) < 0.5
     assert abs(row[[s for s in syms if industry_map[s] == "fin"]].mean()) < 0.5
+
+
+def test_neutralize_masked_nan() -> None:
+    """被 mask 剔除的标的(缺市值自变量)输出 NaN,而非保留原值(C5)。"""
+    rng = np.random.default_rng(5)
+    rows, cols = 5, 8
+    idx = pd.DatetimeIndex([date(2024, 1, 1) + timedelta(days=i) for i in range(rows)])
+    syms = [f"S{j}" for j in range(cols)]
+    factor = pd.DataFrame(rng.normal(size=(rows, cols)), index=idx, columns=syms)
+    logcap = pd.DataFrame(rng.uniform(8, 12, (rows, cols)), index=idx, columns=syms)
+    logcap["S0"] = np.nan  # S0 缺市值 → 应被 mask 剔除
+    neut = neutralize(factor, industry_map=None, log_mktcap=logcap)
+    # 缺自变量标的输出 NaN(而非原值),其余标的残差与市值去相关
+    assert neut["S0"].isna().all()
+    assert neut.drop(columns="S0").notna().all().all()
+
+
+def test_score_cross_section_neutralize() -> None:
+    """score_cross_section(neutralize=True) 行业分组均值 ≈ 0。"""
+    from djinn.screen.scoring import FactorScore, score_cross_section
+
+    rng = np.random.default_rng(13)
+    cols = 12
+    syms = [f"S{j}" for j in range(cols)]
+    industry_map = {s: ("tech" if j < 6 else "fin") for j, s in enumerate(syms)}
+    base = np.array([3.0 if j < 6 else -3.0 for j in range(cols)])
+    vals = base + rng.normal(0, 0.1, cols)
+    cross = pd.DataFrame({"f": vals}, index=syms)
+    out = score_cross_section(
+        cross,
+        [FactorScore(factor="f", weight=1.0, direction=1)],
+        neutralize=True,
+        industry_map=industry_map,
+    )
+    assert abs(out[[s for s in syms if industry_map[s] == "tech"]].mean()) < 0.5
+    assert abs(out[[s for s in syms if industry_map[s] == "fin"]].mean()) < 0.5

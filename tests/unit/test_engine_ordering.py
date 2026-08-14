@@ -1,0 +1,232 @@
+"""引擎撮合顺序 / 成交参考价 / 限价单 / 停牌续挂测试(A3/A4/A5/A6)。"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+import pandas as pd
+import pytest
+
+from djinn.data.market_data import MarketData
+from djinn.data.schema import Adjust, Bar, Market
+from djinn.engine.broker import Broker
+from djinn.engine.commission import USCommissionModel
+from djinn.engine.constraints import TradeConstraints
+from djinn.engine.event_engine import EngineConfig, EventDrivenEngine
+from djinn.engine.events import Fill, Order, Rejection
+from djinn.engine.slippage import ZeroSlippage
+from djinn.portfolio.account import Account
+from djinn.strategy.base import Strategy
+
+
+def _bar(
+    *,
+    open_: float = 100.0,
+    close: float = 100.0,
+    volume: float = 10000.0,
+    amount: float = 0.0,
+    suspended: bool = False,
+) -> Bar:
+    return Bar(
+        timestamp=date(2024, 1, 5),
+        symbol="S",
+        market=Market.US,
+        open=open_,
+        high=max(open_, close) * 1.01,
+        low=min(open_, close) * 0.99,
+        close=close,
+        volume=volume,
+        amount=amount,
+        is_suspended=suspended,
+    )
+
+
+def _broker(acct: Account, fill_ref: str = "open") -> Broker:
+    return Broker(
+        account=acct,
+        commission=USCommissionModel(rate=0.0, min_commission=0.0),
+        slippage=ZeroSlippage(),
+        constraints=TradeConstraints(market=Market.US),
+        fill_ref=fill_ref,
+    )
+
+
+def _md(symbol: str, prices: list[float]) -> MarketData:
+    idx = pd.bdate_range("2024-01-01", periods=len(prices))
+    df = pd.DataFrame(
+        {
+            "open": prices,
+            "high": [p * 1.01 for p in prices],
+            "low": [p * 0.99 for p in prices],
+            "close": prices,
+            "volume": [1.0e6] * len(prices),
+        },
+        index=idx,
+    )
+    return MarketData(symbol=symbol, market=Market.US, df=df, adjust=Adjust.BACKWARD)
+
+
+def _engine(initial_cash: float) -> EngineConfig:
+    return EngineConfig(
+        initial_cash=initial_cash,
+        commission=USCommissionModel(rate=0.0, min_commission=0.0),
+        slippage=ZeroSlippage(),
+    )
+
+
+# ── A5:fill_ref ────────────────────────────────────────
+
+
+def test_fill_ref_close() -> None:
+    """fill_ref=close:成交价 = 当日 close(而非 open)。"""
+    acct = Account(initial_cash=Decimal("100000"))
+    broker = _broker(acct, fill_ref="close")
+    order = Order(id=1, symbol="S", side="buy", created_ts=date(2024, 1, 5), qty=100)
+    result = broker.execute(order, _bar(open_=110.0, close=120.0), 100.0, 100000.0)
+    assert isinstance(result, Fill)
+    assert result.price == 120.0
+
+
+def test_fill_ref_vwap() -> None:
+    """fill_ref=vwap:成交价 = amount / volume。"""
+    acct = Account(initial_cash=Decimal("100000"))
+    broker = _broker(acct, fill_ref="vwap")
+    order = Order(id=1, symbol="S", side="buy", created_ts=date(2024, 1, 5), qty=100)
+    result = broker.execute(
+        order, _bar(open_=110.0, close=120.0, amount=2_000_000.0), 100.0, 100000.0
+    )
+    assert isinstance(result, Fill)
+    assert result.price == pytest.approx(200.0)  # 2_000_000 / 10_000
+
+
+# ── A5:limit_price ─────────────────────────────────────
+
+
+def test_limit_buy_not_filled() -> None:
+    """买限价低于开盘价 → 拒单(续挂,retryable=True)。"""
+    acct = Account(initial_cash=Decimal("100000"))
+    broker = _broker(acct)
+    order = Order(
+        id=1,
+        symbol="S",
+        side="buy",
+        created_ts=date(2024, 1, 5),
+        qty=100,
+        limit_price=100.0,
+    )
+    result = broker.execute(order, _bar(open_=110.0, close=110.0), 100.0, 100000.0)
+    assert isinstance(result, Rejection)
+    assert result.retryable is True
+    assert "限价" in result.reason
+
+
+def test_limit_sell_not_filled() -> None:
+    """卖限价高于开盘价 → 拒单(续挂)。"""
+    acct = Account(initial_cash=Decimal("100000"))
+    broker = _broker(acct)
+    order = Order(
+        id=1,
+        symbol="S",
+        side="sell",
+        created_ts=date(2024, 1, 5),
+        qty=100,
+        limit_price=120.0,
+    )
+    result = broker.execute(order, _bar(open_=110.0, close=110.0), 100.0, 100000.0)
+    assert isinstance(result, Rejection)
+    assert result.retryable is True
+
+
+# ── A6:停牌续挂结构化 ───────────────────────────────────
+
+
+def test_suspension_retryable_flag() -> None:
+    """停牌拒单 retryable=True;资金不足拒单 retryable=False。"""
+    acct = Account(initial_cash=Decimal("100000"))
+    broker = _broker(acct)
+    order = Order(id=1, symbol="S", side="buy", created_ts=date(2024, 1, 5), qty=100)
+    susp = broker.execute(order, _bar(suspended=True), 100.0, 100000.0)
+    assert isinstance(susp, Rejection)
+    assert susp.retryable is True
+
+    # 非停牌拒单(CN 市场不足最小手):retryable=False
+    cn_broker = Broker(
+        account=Account(initial_cash=Decimal("100000")),
+        commission=USCommissionModel(rate=0.0, min_commission=0.0),
+        slippage=ZeroSlippage(),
+        constraints=TradeConstraints(market=Market.CN),
+        fill_ref="open",
+    )
+    order50 = Order(
+        id=2, symbol="600000", side="buy", created_ts=date(2024, 1, 5), qty=50
+    )
+    result = cn_broker.execute(order50, _bar(open_=10.0, close=10.0), 10.0, 100000.0)
+    assert isinstance(result, Rejection)
+    assert result.retryable is False
+
+
+# ── A3:先卖后买 ────────────────────────────────────────
+
+
+def test_sell_before_buy_same_batch() -> None:
+    """同一批订单先卖后买:卖单回笼资金后买单可全额成交(不受列表顺序影响)。"""
+
+    class _Strat(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.day = 0
+
+        def on_bar(self, ctx) -> None:  # type: ignore[override]
+            self.day += 1
+            if self.day == 1:
+                ctx.buy("A", size=100)
+            elif self.day == 2:
+                ctx.buy("B", size=100)  # 先买(FIFO 会因资金不足缩减)
+                ctx.sell("A", size=100)  # 后卖(回笼资金)
+
+    result = EventDrivenEngine(_engine(10000.0)).run(
+        _Strat(), {"A": _md("A", [50.0] * 4), "B": _md("B", [80.0] * 4)}
+    )
+    b_buys = [f for f in result.trades if f.symbol == "B" and f.side == "buy"]
+    assert b_buys, "B 应有买单成交"
+    # 两阶段:先卖 A(回笼 5000)→ 现金 10000,足以全额买 100 股 B(8000)
+    assert b_buys[0].qty == pytest.approx(100.0)
+
+
+# ── A4:target_percent 用开盘价口径 ──────────────────────
+
+
+def test_target_percent_uses_open_price() -> None:
+    """跳空(open != close)时,再平衡 target_percent 按开盘价口径计算股数。"""
+
+    idx = pd.bdate_range("2024-01-01", periods=3)
+    df = pd.DataFrame(
+        {
+            "open": [110.0] * 3,
+            "high": [120.0] * 3,
+            "low": [110.0] * 3,
+            "close": [120.0] * 3,
+            "volume": [1.0e6] * 3,
+        },
+        index=idx,
+    )
+    a_md = MarketData(symbol="A", market=Market.US, df=df, adjust=Adjust.BACKWARD)
+
+    class _Strat(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.day = 0
+
+        def on_bar(self, ctx) -> None:  # type: ignore[override]
+            self.day += 1
+            if self.day == 1:
+                ctx.buy("A", size=100)
+            elif self.day == 2:
+                ctx.order_target_percent("A", 0.5)
+
+    result = EventDrivenEngine(_engine(100000.0)).run(_Strat(), {"A": a_md})
+    buys = [f for f in result.trades if f.side == "buy"]
+    assert len(buys) == 2
+    # 第二笔:equity_open = 100000,cur_mv = 100*110,delta = 39000 → qty = 39000/110
+    assert buys[1].qty == pytest.approx(39000.0 / 110.0, rel=1e-6)

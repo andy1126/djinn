@@ -46,6 +46,27 @@ def test_rsi_bounds():
     assert ((r >= 0) & (r <= 100)).all()
 
 
+def test_rsi_all_up():
+    """连续上涨窗口:avg_loss==0 → RSI=100(而非 fillna 的 50)。"""
+    s = pd.Series(np.linspace(10.0, 30.0, 30))  # 单调上涨
+    r = indicators.rsi(s, 14)
+    assert r.iloc[-1] == 100.0
+
+
+def test_rsi_all_down():
+    """连续下跌窗口:avg_gain==0 → RSI=0。"""
+    s = pd.Series(np.linspace(30.0, 10.0, 30))
+    r = indicators.rsi(s, 14)
+    assert r.iloc[-1] == 0.0
+
+
+def test_rsi_flat():
+    """常数序列(平盘):双 0 → RSI=50。"""
+    s = pd.Series([10.0] * 30)
+    r = indicators.rsi(s, 14)
+    assert r.iloc[-1] == 50.0
+
+
 def test_dataframe_indicators_columns():
     idx = pd.date_range("2024-01-01", periods=60)
     close = pd.Series(np.linspace(10, 20, 60), index=idx)

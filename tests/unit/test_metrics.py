@@ -50,6 +50,23 @@ def test_metrics_empty_series():
     assert m.n_days == 0
 
 
+def test_n_trades_counts_fills():
+    """n_trades = 成交笔数(3 买 2 卖 = 5),不是标的数也不是回合数。"""
+
+    class _Fill:
+        def __init__(self, side: str) -> None:
+            self.side = side
+            self.qty = 100.0
+            self.price = 10.0
+
+    eq = pd.Series(
+        np.linspace(100, 110, 20), index=pd.bdate_range("2024-01-02", periods=20)
+    )
+    trades = [_Fill("buy") for _ in range(3)] + [_Fill("sell") for _ in range(2)]
+    m = compute_metrics(eq, trades, market="US")
+    assert m.n_trades == 5
+
+
 def test_monthly_returns_shape():
     eq = pd.Series(
         np.linspace(100, 120, 252), index=pd.bdate_range("2024-01-02", periods=252)

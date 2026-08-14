@@ -70,6 +70,42 @@ def test_us_no_lot_rounding():
     assert r.adjusted_qty == Decimal("47.5000")
 
 
+def test_sell_odd_lot_allowed():
+    """A 股卖出豁免整手取整:零股(37 股)可卖。"""
+    con = TradeConstraints(market=Market.CN, enforce_lot=True)
+    bar = _bar("600000", 10.0)
+    r = check_constraints("sell", Decimal(37), bar, 9.0, Decimal("100000"), 10.0, con)
+    assert r.ok
+    assert r.adjusted_qty == Decimal("37")
+
+
+def test_sell_clamped_to_available():
+    """卖出夹到可用股数(不取整到 100)。"""
+    con = TradeConstraints(market=Market.CN, enforce_lot=True)
+    bar = _bar("600000", 10.0)
+    r = check_constraints(
+        "sell",
+        Decimal(150),
+        bar,
+        9.0,
+        Decimal("100000"),
+        10.0,
+        con,
+        available_qty=Decimal("120"),
+    )
+    assert r.ok
+    assert r.adjusted_qty == Decimal("120")
+
+
+def test_buy_still_floored():
+    """买入仍整手取整(回归):155 → 100。"""
+    con = TradeConstraints(market=Market.CN, enforce_lot=True)
+    bar = _bar("600000", 10.0)
+    r = check_constraints("buy", Decimal(155), bar, 9.0, Decimal("100000"), 10.0, con)
+    assert r.ok
+    assert r.adjusted_qty == Decimal("100")
+
+
 def test_price_limit_sealed_up():
     """涨停封板(全天 high=low=涨停价):买单拒单。"""
     con = TradeConstraints(market=Market.CN, enforce_price_limit=True)
