@@ -162,6 +162,20 @@ export interface CostsConfig {
 export interface StrategyConfig {
   name: string
   params: Record<string, number | string | boolean | null>
+  selection?: {
+    min_amount?: number | null
+    min_list_days?: number | null
+    exclude_st?: boolean
+    industry_neutral?: boolean
+    max_sector_weight?: number | null
+    min_score_diff?: number
+  } | null
+  timing?: {
+    market_filter?: Record<string, unknown> | null
+    exit_rule?: Record<string, unknown> | null
+    entry_confirm?: Record<string, unknown> | null
+    cooldown_days?: number
+  } | null
 }
 
 export interface RebalanceConfig {

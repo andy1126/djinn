@@ -14,7 +14,7 @@ import pandas as pd
 
 from djinn.analytics import build_report
 from djinn.analytics.report import Report
-from djinn.config.models import BacktestConfig
+from djinn.config.models import BacktestConfig, TimingConfig
 from djinn.data import (
     DataCache,
     MarketData,
@@ -54,6 +54,13 @@ from djinn.screen import FactorScore, Screener
 from djinn.strategy import Strategy
 from djinn.strategy.library import get_strategy_class
 from djinn.strategy.library.factor_portfolio import FactorPortfolioStrategy
+from djinn.strategy.library.factor_timing import FactorTimingStrategy
+from djinn.strategy.timing import (
+    AboveSMAConfirm,
+    ATRTrailingExit,
+    MarketRegimeFilter,
+    SMABreakExit,
+)
 from djinn.utils.exceptions import ConfigError, StrategyError
 from djinn.utils.logging import get_logger
 
@@ -171,19 +178,58 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
 
 
 def build_strategy(
-    cfg: BacktestConfig, *, fundamentals: dict[str, pd.DataFrame] | None = None
+    cfg: BacktestConfig,
+    *,
+    fundamentals: dict[str, pd.DataFrame] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> Strategy:
     """按配置实例化策略(因子组合策略走专属构造)。"""
     if _is_portfolio_scope(cfg):
-        return _build_factor_portfolio(cfg, fundamentals=fundamentals)
+        return _build_factor_portfolio(
+            cfg, fundamentals=fundamentals, registry=registry
+        )
     cls = get_strategy_class(cfg.strategy.name)
     return cls(**{k: v for k, v in cfg.strategy.params.items() if v is not None})
 
 
+def _build_timing(t: TimingConfig) -> dict[str, Any]:
+    """把 TimingConfig 映射为择时组件实例(G8)。"""
+    kwargs: dict[str, Any] = {"cooldown_days": t.cooldown_days}
+    mf = t.market_filter
+    if mf is not None:
+        if mf.get("type") != "sma":
+            raise ConfigError(f"未知 market_filter.type: {mf.get('type')},允许: sma")
+        kwargs["regime"] = MarketRegimeFilter(
+            window=int(mf.get("window", 200)), floor=float(mf.get("floor", 0.0))
+        )
+    er = t.exit_rule
+    if er is not None:
+        tpe = er.get("type")
+        if tpe == "sma_break":
+            kwargs["exit_rule"] = SMABreakExit(window=int(er.get("window", 20)))
+        elif tpe == "atr_trail":
+            kwargs["exit_rule"] = ATRTrailingExit(
+                mult=float(er.get("mult", 3.0)), window=int(er.get("window", 14))
+            )
+        else:
+            raise ConfigError(f"未知 exit_rule.type: {tpe},允许: sma_break/atr_trail")
+    ec = t.entry_confirm
+    if ec is not None:
+        if ec.get("type") != "above_sma":
+            raise ConfigError(
+                f"未知 entry_confirm.type: {ec.get('type')},允许: above_sma"
+            )
+        kwargs["entry_confirm"] = AboveSMAConfirm(window=int(ec.get("window", 20)))
+    return kwargs
+
+
 def _build_factor_portfolio(
-    cfg: BacktestConfig, *, fundamentals: dict[str, pd.DataFrame] | None = None
+    cfg: BacktestConfig,
+    *,
+    fundamentals: dict[str, pd.DataFrame] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> FactorPortfolioStrategy:
-    """构造多因子打分 TopN 组合策略。
+    """构造多因子打分 TopN 组合策略(可选选股增强 + 择时覆盖层)。
 
     因子权重来自 ``strategy.factor_weights``(或 ``universe.factors``);权重为负表示
     "因子值越低越好"(如波动率)。因子用默认参数实例化,定制参数请直接构造策略。
@@ -197,14 +243,73 @@ def _build_factor_portfolio(
     scores = [FactorScore(factor=name, weight=float(w)) for name, w in fw.items()]
     n_stocks = cfg.strategy.n_stocks or cfg.universe.n_stocks or 10
     rebalance_freq = cfg.strategy.rebalance_freq or 20
-    return FactorPortfolioStrategy(
+
+    kwargs: dict[str, Any] = {}
+    sel = cfg.strategy.selection
+    if sel is not None:
+        kwargs.update(
+            min_amount=sel.min_amount,
+            min_list_days=sel.min_list_days,
+            exclude_st=sel.exclude_st,
+            min_score_diff=sel.min_score_diff,
+        )
+        if sel.industry_neutral or sel.max_sector_weight is not None:
+            if registry is not None:
+                symbols = _resolve_universe_symbols(
+                    cfg, registry, cfg.resolved_market()
+                )
+                kwargs["industry_map"] = _industry_map_safe(registry, symbols)
+            kwargs["industry_neutral"] = sel.industry_neutral
+            kwargs["max_sector_weight"] = sel.max_sector_weight
+        if sel.exclude_st:
+            kwargs["names"] = _resolve_names(cfg, registry)  # 失败 → None(降级)
+
+    timing = cfg.strategy.timing
+    cls: type[FactorPortfolioStrategy] = (
+        FactorTimingStrategy if timing is not None else FactorPortfolioStrategy
+    )
+    if timing is not None:
+        kwargs.update(_build_timing(timing))
+
+    return cls(
         factors=factors,
         scores=scores,
         n_stocks=n_stocks,
         rebalance_freq=rebalance_freq,
         allocation=_build_allocation(cfg),
         fundamentals=fundamentals,
+        **kwargs,
     )
+
+
+def _resolve_names(
+    cfg: BacktestConfig, registry: ProviderRegistry | None
+) -> dict[str, str] | None:
+    """解析 symbol → 名称映射(判 ST);失败返回 None(降级)。"""
+    if registry is None:
+        return None
+    names: dict[str, str] = {}
+    try:
+        if cfg.universe.index:
+            for p in registry.providers:
+                try:
+                    names = p.get_index_component_names(cfg.universe.index)
+                except NotImplementedError:
+                    continue
+                except Exception:
+                    continue
+                if names:
+                    break
+        for s in cfg.universe.symbols:
+            if s not in names:
+                try:
+                    names[s] = registry.resolve(s).get_stock_name(s)
+                except Exception:
+                    names[s] = ""
+        return names
+    except Exception as e:
+        _log.warning("解析股票名称失败,ST 过滤降级: %s", e)
+        return None
 
 
 def _resolve_universe_symbols(
@@ -432,7 +537,7 @@ def run_backtest(
     fundamentals: dict[str, pd.DataFrame] | None = None
     if _is_portfolio_scope(cfg):
         fundamentals = _try_fundamental_panels(cfg, data, registry, market)
-    strategy = build_strategy(cfg, fundamentals=fundamentals)
+    strategy = build_strategy(cfg, fundamentals=fundamentals, registry=registry)
     engine_cfg = build_engine_config(cfg)
     engine = EventDrivenEngine(engine_cfg)
     result = engine.run(strategy, data, benchmark=benchmark, should_stop=should_stop)

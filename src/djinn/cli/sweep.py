@@ -32,6 +32,7 @@ ALLOWED_SWEEP_AXES: list[str] = [
     "portfolio.allocation",
     "strategy.n_stocks",
     "strategy.rebalance_freq",
+    "strategy.min_score_diff",
 ]
 
 # 目标指标中"值越小越好"的集合:命中则升序(最优在前)。仅放波动率类;
@@ -86,6 +87,13 @@ def _apply_param(cfg: BacktestConfig, key: str, value: Any) -> None:
         cfg.strategy.n_stocks = int(value)
     elif key == "strategy.rebalance_freq":
         cfg.strategy.rebalance_freq = int(value)
+    elif key == "strategy.min_score_diff":
+        # G 计划:换手惩罚阈值;selection 为 None 时先建默认实例
+        if cfg.strategy.selection is None:
+            from djinn.config.models import SelectionConfig
+
+            cfg.strategy.selection = SelectionConfig()
+        cfg.strategy.selection.min_score_diff = float(value)
     else:
         # 兼容旧形:顶层策略参数(如 fast/slow)
         cfg.strategy.params[key] = value

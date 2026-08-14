@@ -6,7 +6,7 @@ CLI 与(Phase 2)FastAPI 都构造同一个 BacktestConfig 调用同一内核。
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -95,6 +95,28 @@ class CostsConfig(BaseModel):
     max_volume_share: float = Field(default=0.0, ge=0, le=1)  # 单笔成交占当日成交量上限
 
 
+class SelectionConfig(BaseModel):
+    """选股流水线增强(组合策略,G 计划)。"""
+
+    model_config = ConfigDict(extra="forbid")
+    min_amount: float | None = None  # 20 日平均成交额下限(元)
+    min_list_days: int | None = None  # 上市最少交易日数
+    exclude_st: bool = False
+    industry_neutral: bool = False
+    max_sector_weight: float | None = None  # 行业暴露上限(0,1]
+    min_score_diff: float = 0.0  # 换手惩罚阈值(zscore σ)
+
+
+class TimingConfig(BaseModel):
+    """择时覆盖层(组合策略,G 计划)。"""
+
+    model_config = ConfigDict(extra="forbid")
+    market_filter: dict[str, Any] | None = None  # {type:sma,window:200,floor:0.3}
+    exit_rule: dict[str, Any] | None = None  # {type:sma_break|atr_trail,...}
+    entry_confirm: dict[str, Any] | None = None  # {type:above_sma,window:20}
+    cooldown_days: int = 5
+
+
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., description="策略类名(如 MACrossover)")
@@ -110,6 +132,9 @@ class StrategyConfig(BaseModel):
     rebalance_freq: int | None = Field(
         default=None, gt=0, description="调仓间隔(交易日)"
     )
+    # G 计划:选股流水线 + 择时覆盖层(均可选)
+    selection: SelectionConfig | None = None
+    timing: TimingConfig | None = None
 
 
 class RebalanceConfigModel(BaseModel):
