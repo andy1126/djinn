@@ -30,6 +30,7 @@ from djinn.data.schema import (
     COL_LOW,
     COL_OPEN,
     COL_VOLUME,
+    Adjust,
     Market,
 )
 from djinn.engine import (
@@ -122,6 +123,7 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
         enforce_price_limit=cfg.costs.enforce_price_limit,
         enforce_suspension=cfg.costs.enforce_suspension,
         enforce_t_plus_1=cfg.resolved_t_plus_1(),
+        max_volume_share=cfg.costs.max_volume_share,
     )
 
     # 组合:选股(portfolio)策略自行再平衡,引擎侧不注入分配 / 调仓单
@@ -163,6 +165,7 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
         rebalance=rebalancer,
         risk=risk,
         fill_ref=cfg.costs.fill_ref,
+        process_corporate_actions=(cfg.adjust == Adjust.NONE),
         calendar=calendar,
     )
 
@@ -432,9 +435,7 @@ def run_backtest(
     strategy = build_strategy(cfg, fundamentals=fundamentals)
     engine_cfg = build_engine_config(cfg)
     engine = EventDrivenEngine(engine_cfg)
-    result = engine.run(
-        strategy, data, benchmark=benchmark, should_stop=should_stop
-    )
+    result = engine.run(strategy, data, benchmark=benchmark, should_stop=should_stop)
 
     # 报告
     report = build_report(

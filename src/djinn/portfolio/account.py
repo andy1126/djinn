@@ -212,8 +212,21 @@ class Account:
             return
         # 再投资:用分红金额按 price 买入碎股(免费用,不扣现金)
         extra = q_shares(amt / D(price))
+        # 零成本增量摊薄均价(总成本不变、股数增加),否则后续 realized_pnl 高估
+        pos.avg_cost = q_money(pos.avg_cost * pos.qty / (pos.qty + extra))
         pos.qty = q_shares(pos.qty + extra)
-        # 均价不变(分红再投资视为零成本增量,简化)
+
+    def apply_split(self, symbol: str, ratio: Decimal | float) -> None:
+        """拆股:股数 × ratio、均价 ÷ ratio(市值与总成本不变)。"""
+        pos = self.positions.get(symbol)
+        if pos is None or pos.qty <= 0:
+            return
+        r = D(ratio)
+        if r <= 0:
+            return
+        pos.qty = q_shares(pos.qty * r)
+        pos.available = q_shares(pos.available * r)
+        pos.avg_cost = q_money(pos.avg_cost / r)
 
     # ── 诊断 ───────────────────────────────────────────
     def check_invariant(self, prices: Mapping[str, float | Decimal]) -> None:

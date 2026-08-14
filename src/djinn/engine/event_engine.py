@@ -48,6 +48,10 @@ class EngineConfig:
     risk: RiskManager | None = None
     # 成交执行参考价
     fill_ref: str = "open"  # "open" / "close" / "vwap"
+    # 是否处理公司行为(分红/拆股):adjust=none 时由 runner 置 True(A10)
+    process_corporate_actions: bool = False
+    # 退市判定:连续无行情超过 N 个交易日强制平仓(A9)
+    delist_grace_days: int = 30
     # 交易日对齐方式:intersection(交集,默认)/ union(并集,选股回测用)
     calendar: Literal["intersection", "union"] = "intersection"
     # 基准标的(union 模式下以其交易日历为主日历时提供)
@@ -151,6 +155,8 @@ class EventDrivenEngine:
 
         # 每标的的 prev_close 缓存(涨跌停需要昨收)
         prev_close: dict[str, float] = {}
+        # 每标的最晚出现行情的日期(退市判定用,A9)
+        last_bar_date: dict[str, date] = {}
         pending_orders: list[Order] = []
         order_counter = 1
 
@@ -180,6 +186,55 @@ class EventDrivenEngine:
             # 1. MARKET_OPEN:解冻 T+1
             if con.enforce_t_plus_1:
                 account.unfreeze_all()
+
+            # 1.5 公司行为(分红/拆股):adjust=none 时由 Bar 显式字段驱动(A10)
+            if cfg.process_corporate_actions:
+                for s, b in bars.items():
+                    if b is None:
+                        continue
+                    pos = account.positions.get(s)
+                    if pos is None or pos.qty <= 0:
+                        continue
+                    if b.dividend > 0:
+                        account.receive_dividend(s, D(str(b.dividend)))
+                    if b.split_ratio not in (0.0, 1.0):
+                        account.apply_split(s, D(str(b.split_ratio)))
+
+            # 1.6 退市判定:持仓标的超 grace 天无行情 → 按最近价强制平仓(A9)
+            for s in list(account.positions.keys()):
+                pos = account.positions.get(s)
+                if pos is None or pos.qty <= 0:
+                    continue
+                last = last_bar_date.get(s)
+                if last is None or (ts_date - last).days <= cfg.delist_grace_days * 1.5:
+                    continue
+                last_px = prev_close.get(s)
+                qty = float(pos.available) if con.enforce_t_plus_1 else float(pos.qty)
+                if last_px is not None and last_px > 0 and qty > 0:
+                    _log.warning(
+                        "标的 %s 超 %d 天无行情,按退市强制平仓 @%s",
+                        s,
+                        cfg.delist_grace_days,
+                        ts_date,
+                    )
+                    comm_fee = comm.cost("sell", last_px, D(qty), symbol=s)
+                    account.sell(
+                        s, D(qty), last_px, comm_fee, timestamp=ts_date, tag="delist"
+                    )
+                    broker.fills.append(
+                        Fill(
+                            0,
+                            ts_date,
+                            s,
+                            "sell",
+                            qty,
+                            last_px,
+                            float(comm_fee),
+                            "delist",
+                        )
+                    )
+                # 清理该标的的 pending 订单
+                pending_orders = [o for o in pending_orders if o.symbol != s]
 
             # 2. PRICE:撮合昨日 pending 订单(用今日 bar)
             if pending_orders:
@@ -251,10 +306,11 @@ class EventDrivenEngine:
             weights_hist.append(w_snapshot)
             ts_hist.append(ts_date)
 
-            # 更新 prev_close
+            # 更新 prev_close 与最近行情日期(A9 退市判定)
             for s, b in bars.items():
                 if b is not None:
                     prev_close[s] = b.close
+                    last_bar_date[s] = ts_date
 
         # 组装结果
         idx = pd.DatetimeIndex(trading_index)

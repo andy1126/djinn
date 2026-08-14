@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from djinn.data.schema import Bar, Market
-from djinn.utils.decimalmath import D, floor_shares
+from djinn.utils.decimalmath import D, floor_shares, q_shares
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -29,6 +29,8 @@ class TradeConstraints:
     price_limit_pct: float | None = None
     # 标的级的涨跌停幅度覆盖(代码 -> pct)
     symbol_limits: dict[str, float] | None = None
+    # 单笔成交占当日成交量上限(0 = 不限制;选股回测建议 0.1)(A11)
+    max_volume_share: float = 0.0
 
 
 def _price_limit_for(symbol: str, constraints: TradeConstraints) -> float | None:
@@ -135,5 +137,14 @@ def check_constraints(
             if max_qty <= 0:
                 return CheckResult(False, reason="资金不足,无法买到最小手")
             return CheckResult(True, adjusted_qty=max_qty, reason="资金部分成交")
+
+    # 5. 成交量上限(A11):单笔不超过当日成交量 × max_volume_share
+    if constraints.max_volume_share > 0 and bar.volume > 0:
+        cap = D(str(bar.volume)) * D(str(constraints.max_volume_share))
+        if qty > cap:
+            qty = floor_shares(cap, lot) if side == "buy" and lot > 1 else q_shares(cap)
+            if qty <= 0:
+                return CheckResult(False, reason="超过成交量上限")
+            return CheckResult(True, adjusted_qty=qty, reason="成交量上限缩减")
 
     return CheckResult(True, adjusted_qty=qty)

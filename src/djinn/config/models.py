@@ -92,6 +92,7 @@ class CostsConfig(BaseModel):
     enforce_suspension: bool = True
     enforce_lot: bool = True
     fill_ref: Literal["open", "close", "vwap"] = "open"  # 成交参考价
+    max_volume_share: float = Field(default=0.0, ge=0, le=1)  # 单笔成交占当日成交量上限
 
 
 class StrategyConfig(BaseModel):
