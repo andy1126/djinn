@@ -11,6 +11,7 @@ yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
 from __future__ import annotations
 
 import math
+import threading
 import time
 from datetime import date
 from typing import Any, cast
@@ -46,6 +47,7 @@ from djinn.data.schema import (
     COL_REVENUE_YOY,
     COL_ROE,
     COL_SPLIT_RATIO,
+    COL_TOTAL_ASSETS,
     COL_VOLUME,
     Adjust,
     Market,
@@ -84,6 +86,7 @@ class YahooProvider(DataProvider):
         self.rate_limit_sec = rate_limit_sec
         self.max_retries = max(1, max_retries)
         self._last_request = 0.0
+        self._rate_lock = threading.Lock()  # 限速临界区(跨线程串行)
 
     def supports(self, symbol: str, market: Market | None = None) -> bool:
         # yfinance 能拉美股字母代码与指数(^GSPC / ^HSI);A 股 6 位数字代码不交给它
@@ -103,7 +106,7 @@ class YahooProvider(DataProvider):
     ) -> MarketData:
         ysym = self._yf_symbol(symbol)
         cached = self.cache.get(self.name, ysym, adjust)
-        if DataCache.covers(cached, start, end):
+        if DataCache.covers_soft(cached, start, end):
             assert cached is not None
             df = cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
         else:
@@ -139,11 +142,7 @@ class YahooProvider(DataProvider):
         except ImportError as e:  # pragma: no cover
             raise ProviderError("yfinance 未安装") from e
         # 限流
-        if self.rate_limit_sec > 0:
-            elapsed = time.monotonic() - self._last_request
-            if elapsed < self.rate_limit_sec:
-                time.sleep(self.rate_limit_sec - elapsed)
-            self._last_request = time.monotonic()
+        self._throttle()
         _log.info("yfinance 拉取 %s [%s ~ %s]", symbol, start, end)
         # yfinance 易发网络抖动 / 偶发空返回;指数退避重试。
         last_exc: Exception | None = None
@@ -331,6 +330,10 @@ class YahooProvider(DataProvider):
         out[COL_GROSS_MARGIN] = (
             _safe_div(gross_profit, revenue).reindex(periods) * 100.0
         )
+        out[COL_REVENUE] = revenue.reindex(periods)
+        out[COL_NET_PROFIT] = net_income.reindex(periods)
+        total_assets = row_at(bs, "Total Assets")
+        out[COL_TOTAL_ASSETS] = total_assets.reindex(periods)
         # 同比:与上一会计年度比较(升序后 shift 1)
         rev_asc = revenue.reindex(periods).sort_index()
         ni_asc = net_income.reindex(periods).sort_index()
@@ -343,7 +346,9 @@ class YahooProvider(DataProvider):
         return out.sort_index()
 
     def _throttle(self) -> None:
-        if self.rate_limit_sec > 0:
+        if self.rate_limit_sec <= 0:
+            return
+        with self._rate_lock:
             elapsed = time.monotonic() - self._last_request
             if elapsed < self.rate_limit_sec:
                 time.sleep(self.rate_limit_sec - elapsed)

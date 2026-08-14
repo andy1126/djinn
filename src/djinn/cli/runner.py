@@ -5,6 +5,7 @@ CLI(`djinn run`)与(Phase 2)FastAPI 端点共用此模块,保证结果一致。
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -161,6 +162,7 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
         allocation=allocation,
         rebalance=rebalancer,
         risk=risk,
+        fill_ref=cfg.costs.fill_ref,
         calendar=calendar,
     )
 
@@ -381,12 +383,16 @@ def run_backtest(
     csv_dir: str | None = None,
     cache: DataCache | None = None,
     with_attribution: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> RunResult:
     """执行完整回测:数据 → 引擎 → 报告 → 导出。
 
     ``with_attribution=True`` 时额外计算 Brinson 行业归因与(因子组合策略)
     因子暴露 / 行业分布,填充进 ``report.attribution`` / ``report.factor_exposure``
     (供 Web 报告端点;CLI 默认关闭以避免额外的行业映射网络开销)。
+
+    ``should_stop`` 为协作式取消回调:引擎主循环每日检查,返回 True 时抛
+    :class:`~djinn.utils.exceptions.BacktestCancelled` 提前终止(E4)。
     """
     market = cfg.resolved_market()
     if registry is None:
@@ -426,7 +432,9 @@ def run_backtest(
     strategy = build_strategy(cfg, fundamentals=fundamentals)
     engine_cfg = build_engine_config(cfg)
     engine = EventDrivenEngine(engine_cfg)
-    result = engine.run(strategy, data, benchmark=benchmark)
+    result = engine.run(
+        strategy, data, benchmark=benchmark, should_stop=should_stop
+    )
 
     # 报告
     report = build_report(

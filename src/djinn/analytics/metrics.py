@@ -120,8 +120,10 @@ def compute_metrics(
         market: 市场代码(CN/HK/US),用于年化因子。
         trade_pnls: 每笔已实现盈亏列表(用于胜率/盈亏比);若 None 则从 trades 推导。
     """
+    # 物化 trades(fills 列表):Iterable 可能已被消费,后续多处使用。
+    trades = list(trades or [])
     if len(equity) < 2:
-        return Metrics(n_days=len(equity))
+        return Metrics(n_days=len(equity), n_trades=len(trades))
     af = _annual_factor(market)
     rets = _daily_returns(equity)
     total_return = float(equity.iloc[-1] / equity.iloc[0] - 1.0)
@@ -153,13 +155,11 @@ def compute_metrics(
     max_losing = _max_losing_streak(rets)
 
     # 胜率 / 盈亏比
-    pnls = (
-        list(trade_pnls) if trade_pnls is not None else _pnls_from_trades(trades or [])
-    )
+    pnls = list(trade_pnls) if trade_pnls is not None else _pnls_from_trades(trades)
     win_rate, pl_ratio = _win_stats(pnls)
 
     # 换手率 = 期间成交额 / 平均净值
-    turnover = _turnover(equity, trades or [])
+    turnover = _turnover(equity, trades)
 
     return Metrics(
         total_return=total_return,
@@ -172,7 +172,7 @@ def compute_metrics(
         win_rate=win_rate,
         profit_loss_ratio=pl_ratio,
         turnover=turnover,
-        n_trades=len(pnls),
+        n_trades=len(trades),
         n_days=len(equity),
         cagr=cagr,
         volatility=daily_vol,

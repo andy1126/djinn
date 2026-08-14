@@ -91,6 +91,7 @@ class CostsConfig(BaseModel):
     enforce_price_limit: bool = True
     enforce_suspension: bool = True
     enforce_lot: bool = True
+    fill_ref: Literal["open", "close", "vwap"] = "open"  # 成交参考价
 
 
 class StrategyConfig(BaseModel):

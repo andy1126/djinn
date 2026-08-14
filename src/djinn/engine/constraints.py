@@ -56,6 +56,7 @@ class CheckResult:
     ok: bool
     reason: str = ""
     adjusted_qty: Decimal | None = None
+    retryable: bool = False  # 停牌等"次日续挂"类拒单(而非永久丢弃)
 
 
 def check_constraints(
@@ -66,19 +67,32 @@ def check_constraints(
     account_cash: Decimal,
     ref_price: float,
     constraints: TradeConstraints,
+    *,
+    available_qty: Decimal | None = None,
 ) -> CheckResult:
-    """逐项校验订单约束(返回 ok 与调整后股数)。"""
+    """逐项校验订单约束(返回 ok 与调整后股数)。
+
+    Args:
+        available_qty: 当前可用股数(卖出方向用于夹到可用,允许零股全出)。
+    """
     # 1. 停牌
     if constraints.enforce_suspension and bar.is_suspended:
-        return CheckResult(False, reason=f"停牌({bar.timestamp})")
+        return CheckResult(False, reason=f"停牌({bar.timestamp})", retryable=True)
 
-    # 2. 最小手:向下取整到 lot 的整数倍
+    # 2. 最小手:买入向下取整到 lot 的整数倍;卖出不取整(允许零股一次性卖出)
     qty = raw_qty
     lot = constraints.market.lot_size if constraints.enforce_lot else 1
-    if constraints.enforce_lot and lot > 1:
+    if constraints.enforce_lot and lot > 1 and side == "buy":
         qty = floor_shares(qty, lot)
         if qty <= 0:
             return CheckResult(False, reason=f"不足最小手 {lot} 股")
+    elif constraints.enforce_lot and lot > 1 and side == "sell":
+        # 卖出:整手部分之外的零股允许一次性卖出(不得超过可用股数);
+        # 不向下取整,由后续 Account.sell 的 available 校验兜底。
+        if available_qty is not None and raw_qty > available_qty:
+            qty = available_qty  # 夹到可用(零股全出)
+        else:
+            qty = raw_qty  # 不取整,允许零股
 
     # 3. 涨跌停:开盘即涨停的买单、跌停的卖单拒单
     if constraints.enforce_price_limit and prev_close is not None:

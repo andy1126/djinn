@@ -87,6 +87,7 @@ class PortfolioView:
         self._account = account
         self._prices = prices
         self._now = now
+        self._equity_cache: float | None = None
 
     @property
     def cash(self) -> Any:
@@ -96,7 +97,10 @@ class PortfolioView:
 
     @property
     def equity(self) -> float:
-        return float(self._account.equity(self._prices))
+        # 惰性缓存:PortfolioView 每交易日新建,缓存天然按日失效(D2)
+        if self._equity_cache is None:
+            self._equity_cache = float(self._account.equity(self._prices))
+        return self._equity_cache
 
     @property
     def now(self) -> date:
@@ -120,10 +124,15 @@ class PortfolioView:
         return mv / eq if eq > 0 else 0.0
 
     def weights(self) -> dict[str, float]:
-        out: dict[str, float] = {}
-        for sym in self._account.positions:
-            out[sym] = self.weight(sym)
-        return out
+        # 一次算 equity 再统一除,避免逐 symbol 重复算 equity(O(n²) → O(n))(D2)
+        eq = self.equity
+        if eq <= 0:
+            return dict.fromkeys(self._account.positions, 0.0)
+        return {
+            s: float(p.qty) * self._prices.get(s, 0.0) / eq
+            for s, p in self._account.positions.items()
+            if p.qty > 0
+        }
 
     @property
     def positions(self) -> dict[str, Position]:
@@ -155,8 +164,12 @@ class Context:
         *,
         size: int | float | None = None,
         percent: float | None = None,
+        limit: float | None = None,
     ) -> None:
-        """买入。``size`` 指股数,``percent`` 指按当前净值的百分比买入。"""
+        """买入。``size`` 指股数,``percent`` 指按当前净值的百分比买入。
+
+        ``limit`` 为限价(买限价 ≥ 成交价才成交),未达则次日续挂。
+        """
         if size is None and percent is None:
             raise StrategyError("buy 需指定 size 或 percent")
         if percent is not None:
@@ -166,11 +179,16 @@ class Context:
                 symbol=symbol,
                 side="buy",
                 target_percent=cur + percent,
+                limit_price=limit,
                 created_ts=self.now,
             )
         else:
             intent = OrderIntent(
-                symbol=symbol, side="buy", size=size, created_ts=self.now
+                symbol=symbol,
+                side="buy",
+                size=size,
+                limit_price=limit,
+                created_ts=self.now,
             )
         self.orders.append(intent)
 
@@ -180,7 +198,9 @@ class Context:
         *,
         size: int | float | None = None,
         percent: float | None = None,
+        limit: float | None = None,
     ) -> None:
+        """卖出。``limit`` 为限价(卖限价 ≤ 成交价才成交),未达则次日续挂。"""
         if size is None and percent is None:
             raise StrategyError("sell 需指定 size 或 percent")
         if percent is not None:
@@ -189,11 +209,16 @@ class Context:
                 symbol=symbol,
                 side="sell",
                 target_percent=max(0.0, cur - percent),
+                limit_price=limit,
                 created_ts=self.now,
             )
         else:
             intent = OrderIntent(
-                symbol=symbol, side="sell", size=size, created_ts=self.now
+                symbol=symbol,
+                side="sell",
+                size=size,
+                limit_price=limit,
+                created_ts=self.now,
             )
         self.orders.append(intent)
 
@@ -226,6 +251,9 @@ class Strategy(ABC):  # noqa: B024
     """
 
     scope: str = SCOPE_PER_SYMBOL
+    # D1:signals-only 策略默认启用预计算(引擎一次性算全量信号,主循环 O(1) 查表)。
+    # 前提:signals 为因果运算(t 日输出仅依赖 ≤t 输入),rolling/shift 类指标满足。
+    precompute_signals: bool = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -264,12 +292,19 @@ class Strategy(ABC):  # noqa: B024
             )
         if not hasattr(self, "_signal_state"):
             self._signal_state: dict[str, int] = {}
+        # D1 快速路径:引擎预计算的信号序列,O(1) asof 查表(≤now 最近非 NaN 值)
+        presignals = getattr(self, "_presignals", None)
         for symbol in ctx.data.symbols:
-            df = ctx.data[symbol]
-            if len(df) == 0:
-                continue
-            sig_series = self.signals(df)
-            today_sig = int(sig_series.iloc[-1]) if len(sig_series) else 0
+            if presignals is not None and symbol in presignals:
+                ser = presignals[symbol]
+                asof_val = ser.asof(pd.Timestamp(ctx.now))
+                today_sig = int(asof_val) if pd.notna(asof_val) else 0
+            else:
+                df = ctx.data[symbol]
+                if len(df) == 0:
+                    continue
+                sig_series = self.signals(df)
+                today_sig = int(sig_series.iloc[-1]) if len(sig_series) else 0
             last = self._signal_state.get(symbol, 0)
             if today_sig != last:
                 if today_sig == 1:

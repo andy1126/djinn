@@ -136,6 +136,33 @@ class FundamentalsRouter(FundamentalsSource):
             raise ValueError(f"无 provider 支持 {symbol} 基本面时序")
         return provider.get_fundamentals_history(symbol, start, end)
 
+    def get_daily_valuation(
+        self, symbol: str, start: date, end: date, market: Market | None = None
+    ) -> pd.DataFrame:
+        """单标的日频估值时序(按 provider 优先级路由)。
+
+        依注册顺序遍历 provider(tushare 有 token 优先、akshare 兜底),首个
+        ``supports`` 且返回非空日频估值者命中;全部不支持返回空 DataFrame(由
+        调用方退化为快照口径)。
+        """
+        m = market or detect_market(symbol)
+        for provider in self._providers:
+            try:
+                if not provider.supports(symbol, m):
+                    continue
+            except Exception:
+                continue
+            try:
+                daily = provider.get_daily_valuation(symbol, start, end)
+            except NotImplementedError:
+                continue
+            except Exception as e:
+                _log.debug("%s 日频估值 %s 失败: %s", provider.name, symbol, e)
+                continue
+            if daily is not None and len(daily):
+                return daily
+        return pd.DataFrame()
+
     # ── 便捷:行业 / 市值代理 ─────────────────────────────
     def market_cap_snapshot(
         self, symbols: list[str], when: date, market: Market | None = None

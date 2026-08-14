@@ -111,6 +111,11 @@ def rsi(close: pd.Series, period: int | float = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     out = 100 - 100 / (1 + rs)
+    # 全涨(avg_loss==0 且 avg_gain>0)→ 100;平盘(双 0)→ 50;数据缺失段保持 50
+    both_zero = (avg_loss == 0) & (avg_gain > 0)
+    out = out.mask(both_zero, 100.0)
+    flat = (avg_loss == 0) & (avg_gain == 0)
+    out = out.mask(flat, 50.0)
     return out.fillna(50.0)
 
 

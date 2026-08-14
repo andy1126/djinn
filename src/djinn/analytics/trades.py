@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from djinn.utils.decimalmath import to_float
+from djinn.analytics.roundtrip import pair_round_trips
 
 
 @dataclass
@@ -19,19 +19,21 @@ class TradeStats:
     n_trades: int = 0
     n_buys: int = 0
     n_sells: int = 0
+    n_round_trips: int = 0
     win_rate: float = 0.0
     profit_loss_ratio: float = 0.0
     avg_win: float = 0.0
     avg_loss: float = 0.0
     avg_holding_days: float = 0.0
     total_realized_pnl: float = 0.0
-    per_trade_pnl: list[float] = field(default_factory=list)
+    per_trade_pnl: list[float] = field(default_factory=list)  # 每回合 pnl
 
     def to_dict(self) -> dict[str, float | int]:
         return {
             "n_trades": self.n_trades,
             "n_buys": self.n_buys,
             "n_sells": self.n_sells,
+            "n_round_trips": self.n_round_trips,
             "win_rate": self.win_rate,
             "profit_loss_ratio": self.profit_loss_ratio,
             "avg_win": self.avg_win,
@@ -47,23 +49,22 @@ def compute_trade_stats(
     *,
     realized_pnls: dict[str, Decimal] | None = None,
 ) -> TradeStats:
-    """从成交记录与持仓 realized_pnl 计算交易统计。
+    """从成交记录重建 round-trip 回合,计算交易统计。
+
+    胜率 / 盈亏比的数据源为 :func:`pair_round_trips` 的**每回合净盈亏**(含双边
+    佣金摊销),而非各标的累计 ``realized_pnl``(后者把同标的多次买卖压成一笔,
+    胜率实为"盈利标的占比")。
 
     Args:
-        fills: engine.Fill 列表。
-        realized_pnls: {symbol: Decimal} 各标的累计已实现盈亏(来自 Position.realized_pnl)。
+        fills: engine.Fill 列表(统计层用 float 口径)。
+        realized_pnls: 已弃用,保留兼容(不再读取;回合自给自足)。
     """
     n_buys = sum(1 for f in fills if getattr(f, "side", "") == "buy")
     n_sells = sum(1 for f in fills if getattr(f, "side", "") == "sell")
-    pnls: list[float] = []
-    total_realized = 0.0
-    if realized_pnls:
-        for _sym, pnl in realized_pnls.items():
-            v = to_float(pnl)
-            if v != 0.0:
-                pnls.append(v)
-                total_realized += v
-    if not pnls:
+    rts = pair_round_trips(fills)
+    pnls = [rt.pnl for rt in rts]
+    total_realized = float(sum(pnls))
+    if not rts:
         return TradeStats(n_trades=len(fills), n_buys=n_buys, n_sells=n_sells)
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
@@ -71,12 +72,12 @@ def compute_trade_stats(
     avg_loss = float(np.mean(losses)) if losses else 0.0
     win_rate = len(wins) / len(pnls) if pnls else 0.0
     pl_ratio = avg_win / abs(avg_loss) if avg_loss != 0 else 0.0
-    # 平均持仓周期(简化:总交易日 / 卖出次数)
-    avg_hold = 0.0
+    avg_hold = float(np.mean([rt.holding_days for rt in rts])) if rts else 0.0
     return TradeStats(
         n_trades=len(fills),
         n_buys=n_buys,
         n_sells=n_sells,
+        n_round_trips=len(rts),
         win_rate=win_rate,
         profit_loss_ratio=pl_ratio,
         avg_win=avg_win,
@@ -130,6 +131,8 @@ def compare_benchmark(
     idx = strategy_equity.index.intersection(benchmark_equity.index)
     s = strategy_equity.loc[idx].dropna()
     b = benchmark_equity.loc[idx].dropna()
+    if b.isna().all():  # 基准全 NaN(防御:理论上 bfill 后已消除前导 NaN)
+        return BenchmarkStats()
     if len(s) < 2 or len(b) < 2:
         return BenchmarkStats()
     sr = s.pct_change().dropna()

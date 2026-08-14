@@ -97,3 +97,14 @@ class FundamentalsSource(ABC):
         self, symbol: str, start: date, end: date, market: Market | None = None
     ) -> pd.DataFrame:
         """返回单标的在 [start, end] 可见的财报时序(含 announce/report_date)。"""
+
+    def get_daily_valuation(
+        self, symbol: str, start: date, end: date, market: Market | None = None
+    ) -> pd.DataFrame:
+        """返回单标的在 [start, end] 的日频估值时序(point-in-time,无前视)。
+
+        语义不同于财报时序(按 report/announce_date 生效):估值是**日频行情衍生
+        序列**(pe/pb/ps 等,每天随收盘价更新),index=交易日。基类默认返回空
+        DataFrame(不支持);provider / 路由器按需覆写。
+        """
+        return pd.DataFrame()

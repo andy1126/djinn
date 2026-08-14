@@ -34,6 +34,8 @@ COL_ROE: Final[str] = "roe"  # 净资产收益率
 COL_GROSS_MARGIN: Final[str] = "gross_margin"  # 毛利率
 COL_REVENUE: Final[str] = "revenue"  # 营业收入
 COL_NET_PROFIT: Final[str] = "net_profit"  # 净利润
+COL_OCF: Final[str] = "ocf"  # 经营活动现金流净额
+COL_TOTAL_ASSETS: Final[str] = "total_assets"  # 总资产
 COL_REVENUE_YOY: Final[str] = "revenue_yoy"  # 营收同比
 COL_PROFIT_YOY: Final[str] = "profit_yoy"  # 净利同比
 COL_INDUSTRY: Final[str] = "industry"  # 所属行业
@@ -51,6 +53,8 @@ FUNDAMENTAL_VALUE_COLUMNS: Final[tuple[str, ...]] = (
     COL_GROSS_MARGIN,
     COL_REVENUE,
     COL_NET_PROFIT,
+    COL_OCF,
+    COL_TOTAL_ASSETS,
     COL_REVENUE_YOY,
     COL_PROFIT_YOY,
 )

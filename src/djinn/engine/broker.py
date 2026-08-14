@@ -51,8 +51,17 @@ class Broker:
     commission: CommissionModel
     slippage: SlippageModel
     constraints: TradeConstraints
+    fill_ref: str = "open"  # 成交参考价: "open" / "close" / "vwap"
     fills: list[Fill] = field(default_factory=list)
     rejections: list[Rejection] = field(default_factory=list)
+
+    def _ref_price(self, bar: Bar) -> float:
+        """按 fill_ref 取成交参考价。"""
+        if self.fill_ref == "close":
+            return bar.close if bar.close > 0 else bar.open
+        if self.fill_ref == "vwap":
+            return bar.amount / bar.volume if bar.volume > 0 else bar.open
+        return bar.open if bar.open > 0 else bar.close
 
     def execute(
         self,
@@ -61,8 +70,8 @@ class Broker:
         prev_close: float | None,
         equity: float,
     ) -> Fill | Rejection:
-        """撮合单笔订单(以 bar.open 为参考价,t+1 执行)。"""
-        ref_price = bar.open if bar.open > 0 else bar.close
+        """撮合单笔订单(以 fill_ref 指定参考价应用滑点,t+1 执行)。"""
+        ref_price = self._ref_price(bar)
         # 1. 解析目标股数(target_percent -> qty)
         qty = self._resolve_qty(order, ref_price, equity)
         if qty is None or qty <= 0:
@@ -95,7 +104,25 @@ class Broker:
             self.slippage, order.side, ref_price, bar, order_qty=float(qty)
         )
 
-        # 3. 约束校验(传入粗略资金)
+        # 2.5 限价单:买限价 ≥ 成交价才成交;卖限价 ≤ 成交价才成交;否则挂起(非拒单)
+        if order.limit_price is not None:
+            lp = float(order.limit_price)
+            if (order.side == "buy" and price > lp) or (
+                order.side == "sell" and price < lp
+            ):
+                return Rejection(
+                    order_id=order.id,
+                    timestamp=bar.timestamp,
+                    symbol=order.symbol,
+                    side=order.side,
+                    reason=f"限价未达(limit={lp}, price={price:.4f})",
+                    requested_qty=float(qty),
+                    tag=order.tag,
+                    retryable=True,
+                )
+
+        # 3. 约束校验(传入粗略资金与可用股数)
+        pos_for_check = self.account.positions.get(order.symbol)
         check = check_constraints(
             side=order.side,
             raw_qty=D(qty),
@@ -104,6 +131,7 @@ class Broker:
             account_cash=self.account.cash,
             ref_price=price,
             constraints=self.constraints,
+            available_qty=pos_for_check.available if pos_for_check else None,
         )
         if not check.ok:
             rej = Rejection(
@@ -114,6 +142,7 @@ class Broker:
                 reason=check.reason,
                 requested_qty=float(qty),
                 tag=order.tag,
+                retryable=check.retryable,
             )
             self.rejections.append(rej)
             return rej
@@ -133,7 +162,7 @@ class Broker:
             return rej
 
         # 4. 佣金
-        comm = self.commission.cost(order.side, price, final_qty)
+        comm = self.commission.cost(order.side, price, final_qty, symbol=order.symbol)
 
         # 5. 成交(Account 兜底资金/可用校验)
         # 资金不足时按可用资金缩减股数重试一次(处理 target_percent 满仓的尾差)
@@ -220,7 +249,7 @@ class Broker:
             max_qty = q_shares(max_qty)
         if max_qty <= 0:
             return qty, comm
-        new_comm = self.commission.cost(order.side, price, max_qty)
+        new_comm = self.commission.cost(order.side, price, max_qty, symbol=order.symbol)
         # 二次校验:扣佣金后是否仍超
         if D(max_qty) * D(price) + new_comm > cash:
             # 再缩一档
@@ -231,7 +260,9 @@ class Broker:
             )
             if max_qty <= 0:
                 return qty, comm
-            new_comm = self.commission.cost(order.side, price, max_qty)
+            new_comm = self.commission.cost(
+                order.side, price, max_qty, symbol=order.symbol
+            )
         _log.debug("资金缩减 %s: %s → %s 股(现金 %s)", order.symbol, qty, max_qty, cash)
         return max_qty, new_comm
 

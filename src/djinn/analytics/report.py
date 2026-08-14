@@ -71,12 +71,8 @@ def build_report(
 ) -> Report:
     """从 BacktestResult 组装 Report。"""
     equity = result.equity_curve
-    # realized_pnls 来自 Account.positions
-    realized: dict[str, Any] = {}
-    if result.account is not None:
-        for sym, pos in result.account.positions.items():
-            realized[sym] = pos.realized_pnl
-    trade_stats = compute_trade_stats(result.trades, realized_pnls=realized)
+    # 交易统计基于 round-trip 配对(胜率/盈亏比按回合,而非标的累计 realized_pnl)
+    trade_stats = compute_trade_stats(result.trades)
     metrics = compute_metrics(
         equity,
         result.trades,

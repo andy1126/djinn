@@ -71,6 +71,14 @@ class FactorPortfolioStrategy(Strategy):
         if prices.empty:
             return
         fundamentals = self._visible_fundamentals(ctx)
+        # D3:截断到最大回看窗口(因子 rolling 只依赖最近 lb 日,截断后末行不变)
+        lb = max((getattr(f, "max_lookback", 252) for f in self._factors), default=252)
+        cutoff = pd.Timestamp(ctx.now) - pd.Timedelta(days=int(lb * 1.6) + 30)
+        prices = prices.loc[prices.index >= cutoff]
+        if len(prices) < 2:
+            return
+        ohlcv = {k: v.loc[v.index >= cutoff] for k, v in ohlcv.items()}
+        fundamentals = {k: df.loc[df.index >= cutoff] for k, df in fundamentals.items()}
         # 逐因子取最新截面
         cross: dict[str, pd.Series] = {}
         for f in self._factors:

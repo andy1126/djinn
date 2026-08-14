@@ -26,6 +26,10 @@ class SymbolNotFoundError(DataError):
     """标的代码无法被任何 provider 识别。"""
 
 
+class FactorError(DjinnError):
+    """因子计算失败(所需输入字段缺失或全空 / 参数非法)。"""
+
+
 class StrategyError(DjinnError):
     """策略参数校验 / 执行失败。"""
 
@@ -48,3 +52,7 @@ class OrderRejectedError(DjinnError):
     注意:这是一类**预期内**的回测事件,通常应被引擎捕获并记录为
     ``Rejection``,而非向上抛出。仅在调用方显式希望"失败即抛"时使用。
     """
+
+
+class BacktestCancelled(DjinnError):
+    """回测在协作式中断点检测到取消请求,提前终止。"""

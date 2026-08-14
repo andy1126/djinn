@@ -199,7 +199,10 @@ def sweep_command(
 
     # 排序:REVERSE_MIN_TARGETS 越小越好 → 升序;默认降序。
     reverse = target not in REVERSE_MIN_TARGETS
-    results.sort(key=lambda r: r.get(target, 0.0) or 0.0, reverse=reverse)
+    results.sort(
+        key=lambda r: (r.get(target) if r.get(target) is not None else 0.0),
+        reverse=reverse,
+    )
     direction = "升序" if not reverse else "降序"
     typer.echo(f"\n=== Top {min(top, len(results))} 组合(按 {target} {direction})===")
     for i, r in enumerate(results[:top]):

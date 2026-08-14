@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -25,6 +26,7 @@ from djinn.portfolio.rebalance import Rebalancer
 from djinn.portfolio.risk import RiskLimits, RiskManager
 from djinn.strategy.base import Context, DataView, PortfolioView, Strategy
 from djinn.utils.decimalmath import D, to_float
+from djinn.utils.exceptions import BacktestCancelled
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -46,8 +48,6 @@ class EngineConfig:
     risk: RiskManager | None = None
     # 成交执行参考价
     fill_ref: str = "open"  # "open" / "close" / "vwap"
-    # 是否在第一个交易日按分配建立初始仓位
-    initial_alloc_on_start: bool = False
     # 交易日对齐方式:intersection(交集,默认)/ union(并集,选股回测用)
     calendar: Literal["intersection", "union"] = "intersection"
     # 基准标的(union 模式下以其交易日历为主日历时提供)
@@ -98,6 +98,7 @@ class EventDrivenEngine:
         data: dict[str, MarketData],
         *,
         benchmark: MarketData | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> BacktestResult:
         """运行回测。
 
@@ -105,6 +106,8 @@ class EventDrivenEngine:
             strategy: 策略实例。
             data: {symbol: MarketData},多标的按交易日对齐。
             benchmark: 可选基准 MarketData,记录基准净值曲线。
+            should_stop: 协作式取消回调,每日开盘前检查,返回 True 抛
+                :class:`BacktestCancelled`(E4)。
         """
         if not data:
             raise ValueError("engine.run 需要至少一个标的数据")
@@ -119,11 +122,32 @@ class EventDrivenEngine:
             t_plus_1=con.enforce_t_plus_1,
         )
         broker = Broker(
-            account=account, commission=comm, slippage=slip, constraints=con
+            account=account,
+            commission=comm,
+            slippage=slip,
+            constraints=con,
+            fill_ref=cfg.fill_ref,
         )
 
         # 对齐所有标的的交易日索引(intersection 取交集;union 取并集/以基准日历为主)
         trading_index = self._aligned_index(data, benchmark)
+
+        # D1:signals-only 策略预计算全量信号(无状态纯函数,滚动类指标 t 日值只依赖 ≤t)。
+        # 预计算后主循环每日 O(1) asof 查表,替代 O(T) 全历史重算。
+        presignals: dict[str, pd.Series] = {}
+        if (
+            getattr(strategy, "precompute_signals", False)
+            and type(strategy).on_bar is Strategy.on_bar  # 未覆写 on_bar(走默认适配)
+            and getattr(strategy, "scope", None) == "per_symbol"
+        ):
+            for sym, md in data.items():
+                try:
+                    presignals[sym] = strategy.signals(md.df)
+                except Exception as e:  # 预计算失败 → 整体回退慢路径
+                    _log.warning("预计算 %s 信号失败,回退逐日: %s", sym, e)
+                    presignals.clear()
+                    break
+        strategy._presignals = presignals  # type: ignore[attr-defined]
 
         # 每标的的 prev_close 缓存(涨跌停需要昨收)
         prev_close: dict[str, float] = {}
@@ -141,6 +165,9 @@ class EventDrivenEngine:
         risk = cfg.risk or RiskManager(RiskLimits())
 
         for i, ts in enumerate(trading_index):
+            # E4:协作式取消检查点(每日开盘前)
+            if should_stop is not None and should_stop():
+                raise BacktestCancelled(f"回测已取消 @{ts.date()}")
             ts_date = ts.date()
             bars = self._bars_at(data, ts)
             prices = {s: b.close for s, b in bars.items() if b is not None}
@@ -154,11 +181,20 @@ class EventDrivenEngine:
             if con.enforce_t_plus_1:
                 account.unfreeze_all()
 
-            # 2. PRICE:撮合昨日 pending 订单(用今日开盘 bar)
+            # 2. PRICE:撮合昨日 pending 订单(用今日 bar)
             if pending_orders:
-                equity_now = account.equity_float(prices_mtm)
+                # 撮合口径统一为开盘价:equity / 当前市值 / 成交价三处一致(A4)
+                prices_open = {
+                    s: b.open for s, b in bars.items() if b is not None and b.open > 0
+                }
+                for s, pc in prev_close.items():
+                    prices_open.setdefault(s, pc)  # 当日无行情标的沿用昨收
+                equity_now = account.equity_float(prices_open)
+                # 两阶段撮合:先全部卖单(回笼现金),再全部买单,消除顺序依赖(A3)
+                sells = [o for o in pending_orders if o.side == "sell"]
+                buys = [o for o in pending_orders if o.side == "buy"]
                 still_pending: list[Order] = []
-                for order in pending_orders:
+                for order in sells + buys:
                     bar = bars.get(order.symbol)
                     if bar is None:
                         still_pending.append(order)
@@ -166,8 +202,8 @@ class EventDrivenEngine:
                     result = broker.execute(
                         order, bar, prev_close.get(order.symbol), equity_now
                     )
-                    if isinstance(result, Rejection) and "停牌" in result.reason:
-                        # 停牌:订单继续挂起等下日
+                    if isinstance(result, Rejection) and result.retryable:
+                        # 停牌 / 限价未达:订单继续挂起等下日(A6)
                         still_pending.append(order)
                 pending_orders = still_pending
 
@@ -208,8 +244,9 @@ class EventDrivenEngine:
             for s in symbols:
                 pos = account.positions.get(s)
                 pos_snapshot[s] = to_float(pos.qty) if pos else 0.0
+            w_all = portfolio_view.weights()  # 一次算 equity,避免逐 symbol 重算(D2)
             for s in symbols:
-                w_snapshot[s] = portfolio_view.weight(s)
+                w_snapshot[s] = w_all.get(s, 0.0)
             positions_hist.append(pos_snapshot)
             weights_hist.append(w_snapshot)
             ts_hist.append(ts_date)
@@ -228,7 +265,9 @@ class EventDrivenEngine:
 
         benchmark_curve: pd.Series | None = None
         if benchmark is not None:
-            bm = benchmark.df["close"].reindex(idx).ffill()
+            # bfill 回填前导缺失:基准数据起点晚于策略首日时,bm.iloc[0] 不为 NaN,
+            # 避免整条基准曲线因前导 NaN 传染为全 NaN。
+            bm = benchmark.df["close"].reindex(idx).ffill().bfill()
             benchmark_curve = (bm / bm.iloc[0]) * equity_curve.iloc[0]
 
         return BacktestResult(

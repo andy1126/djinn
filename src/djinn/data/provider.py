@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import date
@@ -116,6 +117,14 @@ class DataProvider(ABC):
             f"{type(self).__name__} 不支持 get_fundamentals_history"
         )
 
+    def get_daily_valuation(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        """单标的日频估值时序(index=交易日,columns 含 pe/pb/ps)。
+
+        仅部分 provider(如 akshare 乐咕 / tushare daily_basic)支持,其余抛
+        NotImplementedError。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_daily_valuation")
+
     def get_profile(self, symbol: str, market: Market | None = None) -> dict[str, Any]:
         """单标的扩展档案(估值扩展/盈利质量/财务健康/分析师/公司概况等)。
 
@@ -129,6 +138,13 @@ class ProviderRegistry:
 
     def __init__(self, providers: Iterable[DataProvider] | None = None) -> None:
         self._providers: list[DataProvider] = list(providers or [])
+        # 单飞:同键(provider, symbol, adjust)并发拉取串行化,后者命中前者写入的缓存。
+        self._fetch_locks: dict[tuple[str, str, str], threading.Lock] = {}
+        self._fetch_locks_guard = threading.Lock()
+
+    def _fetch_lock(self, key: tuple[str, str, str]) -> threading.Lock:
+        with self._fetch_locks_guard:
+            return self._fetch_locks.setdefault(key, threading.Lock())
 
     def register(self, provider: DataProvider) -> None:
         self._providers.append(provider)
@@ -155,4 +171,7 @@ class ProviderRegistry:
         market: Market | None = None,
     ) -> MarketData:
         provider = self.resolve(symbol, market)
-        return provider.get_ohlcv(symbol, start, end, adjust)
+        key = (provider.name, symbol, adjust.value)
+        # 单飞:同键并发拉取串行,后者在锁后 provider.get_ohlcv 内命中缓存,不打重复网络。
+        with self._fetch_lock(key):
+            return provider.get_ohlcv(symbol, start, end, adjust)

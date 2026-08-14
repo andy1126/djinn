@@ -7,6 +7,7 @@ Phase 1 数据层:A 股日线通过 ``akshare.stock_zh_a_hist`` 拉取,含复权
 from __future__ import annotations
 
 import math
+import threading
 import time
 from datetime import date
 
@@ -28,14 +29,19 @@ from djinn.data.schema import (
     COL_IS_SUSPENDED,
     COL_LOW,
     COL_MARKET_CAP,
+    COL_NET_PROFIT,
+    COL_OCF,
     COL_OPEN,
     COL_PB,
     COL_PE,
     COL_PROFIT_YOY,
+    COL_PS,
     COL_RAW_CLOSE,
+    COL_REVENUE,
     COL_REVENUE_YOY,
     COL_ROE,
     COL_SPLIT_RATIO,
+    COL_TOTAL_ASSETS,
     COL_VOLUME,
     Adjust,
     Market,
@@ -105,6 +111,7 @@ class AkShareProvider(DataProvider):
         self.cache = cache or DataCache()
         self.rate_limit_sec = rate_limit_sec
         self._last_request = 0.0
+        self._rate_lock = threading.Lock()  # 限速临界区(跨线程串行)
 
     def supports(self, symbol: str, market: Market | None = None) -> bool:
         if not _has_akshare():
@@ -125,7 +132,7 @@ class AkShareProvider(DataProvider):
         adjust: Adjust = Adjust.BACKWARD,
     ) -> MarketData:
         cached = self.cache.get(self.name, symbol, adjust)
-        if DataCache.covers(cached, start, end):
+        if DataCache.covers_soft(cached, start, end, slack_days=12):
             assert cached is not None
             df = cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
         else:
@@ -149,11 +156,7 @@ class AkShareProvider(DataProvider):
             raise ProviderError(
                 "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
             ) from e
-        if self.rate_limit_sec > 0:
-            elapsed = time.monotonic() - self._last_request
-            if elapsed < self.rate_limit_sec:
-                time.sleep(self.rate_limit_sec - elapsed)
-            self._last_request = time.monotonic()
+        self._throttle()
         code = _normalize_ak_code(symbol)
         ak_adjust = {Adjust.NONE: "", Adjust.FORWARD: "qfq", Adjust.BACKWARD: "hfq"}[
             adjust
@@ -205,7 +208,9 @@ class AkShareProvider(DataProvider):
 
     # ── 限流 ────────────────────────────────────────────
     def _throttle(self) -> None:
-        if self.rate_limit_sec > 0:
+        if self.rate_limit_sec <= 0:
+            return
+        with self._rate_lock:
             elapsed = time.monotonic() - self._last_request
             if elapsed < self.rate_limit_sec:
                 time.sleep(self.rate_limit_sec - elapsed)
@@ -214,7 +219,7 @@ class AkShareProvider(DataProvider):
     # ── 股票池 / 行业 / 基本面(Phase 0 扩展)─────────────────
     def _spot_df(self) -> pd.DataFrame:
         """全 A 股实时快照(``stock_zh_a_spot_em``),universe 缓存整帧复用。"""
-        cached = self.cache.get_universe(self.name, "spot_a")
+        cached = self.cache.get_universe(self.name, "spot_a", max_age_days=7)
         if cached is not None and len(cached):
             return cached
         try:
@@ -267,7 +272,7 @@ class AkShareProvider(DataProvider):
         东财 ``stock_zh_a_spot_em`` 在当前网络不可达时,搜索 / 名称 / 列表
         改走新浪源(仅 code + name,无估值字段)。整帧缓存,按月刷新。
         """
-        cached = self.cache.get_universe(self.name, "code_name_sina")
+        cached = self.cache.get_universe(self.name, "code_name_sina", max_age_days=7)
         if cached is not None and len(cached):
             return cached
         try:
@@ -395,7 +400,7 @@ class AkShareProvider(DataProvider):
 
     def _industry_reverse_map(self) -> dict[str, str]:
         """symbol → 行业名(东财行业板块成分反向索引,universe 缓存)。"""
-        cached = self.cache.get_universe(self.name, "industry_map")
+        cached = self.cache.get_universe(self.name, "industry_map", max_age_days=7)
         if cached is not None and len(cached):
             return dict(
                 zip(
@@ -507,6 +512,10 @@ class AkShareProvider(DataProvider):
         col_map = {
             COL_ROE: ("净资产收益率(%)", "净资产收益率"),
             COL_GROSS_MARGIN: ("销售毛利率(%)", "销售毛利率"),
+            COL_REVENUE: ("主营业务收入", "营业收入"),
+            COL_NET_PROFIT: ("净利润", "归母净利润"),
+            COL_OCF: ("经营活动产生的现金流量净额", "经营现金流"),
+            COL_TOTAL_ASSETS: ("总资产", "资产总计"),
             COL_REVENUE_YOY: ("主营业务收入增长率(%)", "主营业务收入增长率"),
             COL_PROFIT_YOY: ("净利润增长率(%)", "净利润增长率"),
         }
@@ -519,6 +528,67 @@ class AkShareProvider(DataProvider):
             )
         out[COL_REPORT_DATE] = rep
         out[COL_ANNOUNCE_DATE] = rep + pd.Timedelta(days=45)  # 近似公告日
+        return out.sort_index()
+
+    # ── 日频估值(根治 EP/BP/SP 前视)─────────────────────
+    def get_daily_valuation(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        """单标的日频估值时序(``stock_a_indicator_lg`` 乐咕),index=交易日。
+
+        覆盖 pe/pb/ps(无市值);估值是**日频行情衍生序列**,随收盘价每日更新,
+        天然 point-in-time,消除"用今日估值给三年前打分"的前视。整帧缓存,
+        覆盖不足时重拉(``DataCache.covers`` 判定)。
+        """
+        code = _normalize_ak_code(symbol)
+        cache_symbol = f"valuation_{code}"
+        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        if cached is not None and len(cached):
+            cached.index = pd.to_datetime(cached.index)
+            if DataCache.covers(cached, start, end):
+                return cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+        try:
+            import akshare as ak
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
+        self._throttle()
+        _log.info("akshare 拉取 %s 日频估值 stock_a_indicator_lg", code)
+        try:
+            raw = ak.stock_a_indicator_lg(
+                symbol=code,
+                start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"),
+            )
+        except Exception as e:
+            raise ProviderError(f"akshare 拉取 {symbol} 日频估值失败: {e}") from e
+        if raw is None or len(raw) == 0:
+            raise DataError(f"akshare {symbol} 日频估值返回空")
+        df = self._normalize_valuation(raw)
+        self.cache.put_fundamentals(self.name, cache_symbol, df)
+        return df
+
+    @staticmethod
+    def _normalize_valuation(raw: pd.DataFrame) -> pd.DataFrame:
+        """``stock_a_indicator_lg`` 原始列 → 规范化(pe/pb/ps,index=交易日)。"""
+        df = raw.copy()
+        date_col = next(
+            (c for c in ("trade_date", "日期", "date") if c in df.columns), None
+        )
+        if date_col is None:
+            raise DataError(f"akshare 日频估值缺少日期列: {list(df.columns)}")
+        out = pd.DataFrame(index=pd.to_datetime(df[date_col]))
+        col_map = {
+            COL_PE: ("pe", "pe_ttm", "市盈率", "市盈率TTM"),
+            COL_PB: ("pb", "市净率"),
+            COL_PS: ("ps", "ps_ttm", "市销率", "市销率TTM"),
+        }
+        for dst, candidates in col_map.items():
+            src = next((c for c in candidates if c in df.columns), None)
+            out[dst] = (
+                pd.to_numeric(df[src], errors="coerce").to_numpy()
+                if src is not None
+                else float("nan")
+            )
         return out.sort_index()
 
     def search_symbols(

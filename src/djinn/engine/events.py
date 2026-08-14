@@ -72,3 +72,4 @@ class Rejection:
     reason: str
     requested_qty: float = 0.0
     tag: str = ""
+    retryable: bool = False  # 停牌 / 限价未达等"次日续挂"类拒单
