@@ -117,3 +117,53 @@ def neutralize(
         row.loc[list(sel)] = resid
         out.loc[ts] = row
     return out
+
+
+def orthogonalize(
+    factors: dict[str, pd.DataFrame],
+    order: list[str] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """逐日截面对多因子做 Schmidt 正交化(C10)。
+
+    按 ``order``(默认 dict 顺序)依次将每个因子对**前序(已正交化)因子**回归取
+    残差,剥离因子间的线性重叠;被 mask 剔除的标的置 NaN(与 :func:`neutralize` 一致)。
+
+    Args:
+        factors: ``{因子名: date×symbol 面板}``。
+        order: 正交化顺序(前面的因子保留原值,后面的依次正交到前面)。
+
+    Returns:
+        同构 dict;首个因子原样,后续因子为相对前序因子的残差。
+    """
+    if not factors:
+        return {}
+    names = [n for n in (order or list(factors)) if n in factors]
+    out: dict[str, pd.DataFrame] = {n: factors[n].copy() for n in names}
+    if len(names) < 2:
+        return out
+    first = names[0]
+    syms = list(out[first].columns)
+    idx = out[first].index
+    for ts in idx:
+        for i in range(1, len(names)):
+            name = names[i]
+            y = out[name].loc[ts].astype(float)
+            x_cols = [
+                out[prev].loc[ts].astype(float).rename(prev) for prev in names[:i]
+            ]
+            x = pd.concat(x_cols, axis=1).reindex(syms)
+            x.insert(0, "const", 1.0)
+            x = x.astype(float)
+            mask = x.notna().all(axis=1) & y.notna()
+            if int(mask.sum()) <= x.shape[1]:
+                out[name].loc[ts] = float("nan")
+                continue
+            xv = x.to_numpy()[mask.to_numpy()]
+            yv = y.to_numpy()[mask.to_numpy()]
+            coef, *_ = np.linalg.lstsq(xv, yv, rcond=None)
+            resid = yv - xv @ coef
+            row = pd.Series(np.nan, index=y.index)
+            sel = np.array(syms, dtype=object)[mask.to_numpy()]
+            row.loc[list(sel)] = resid
+            out[name].loc[ts] = row
+    return out

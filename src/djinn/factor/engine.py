@@ -10,12 +10,15 @@
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import pandas as pd
 
 from djinn.data.fundamentals import FundamentalsSource
+from djinn.data.market_data import MarketData
 from djinn.data.provider import ProviderRegistry
 from djinn.data.schema import (
     COL_AMOUNT,
@@ -154,16 +157,27 @@ class FactorEngine:
         fields: dict[str, dict[str, pd.Series]] = {
             c: {} for c in (COL_OPEN, COL_HIGH, COL_LOW, COL_VOLUME, COL_AMOUNT)
         }
-        for sym in universe:
+
+        def _fetch_one(sym: str) -> tuple[str, MarketData | None, str | None]:
             try:
                 md = registry.get_ohlcv(sym, start, end, adjust, market=market)
+                return sym, md, None
             except Exception as e:
-                _log.warning("拉取 %s 失败,跳过: %s", sym, e)
+                return sym, None, str(e)
+
+        # D7:IO 密集拉取用线程池并发(E1 已保证 DataCache 线程安全)
+        workers = int(os.environ.get("DJINN_FETCH_WORKERS", "8"))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_fetch_one, universe))
+        for sym, md, err in results:
+            if md is None:
+                _log.warning("拉取 %s 失败,跳过: %s", sym, err)
                 continue
-            closes[sym] = md.df[COL_CLOSE]
+            df = md.df
+            closes[sym] = df[COL_CLOSE]
             for c in fields:
-                if c in md.df.columns:
-                    fields[c][sym] = md.df[c]
+                if c in df.columns:
+                    fields[c][sym] = df[c]
         if not closes:
             raise ValueError("universe 无可用行情,无法计算因子")
         close_panel = pd.DataFrame(closes).sort_index()
