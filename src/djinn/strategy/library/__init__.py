@@ -10,6 +10,7 @@ from djinn.strategy.library.cross_sectional_momentum import CrossSectionalMoment
 from djinn.strategy.library.dca import DCA
 from djinn.strategy.library.dual_momentum import DualMomentum
 from djinn.strategy.library.factor_portfolio import FactorPortfolioStrategy
+from djinn.strategy.library.factor_timing import FactorTimingStrategy
 from djinn.strategy.library.grid import Grid
 from djinn.strategy.library.ma_crossover import MACrossover
 from djinn.strategy.library.macd_crossover import MACDCrossover
@@ -41,6 +42,7 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "PairsSpread": PairsSpread,
     "VolTarget": VolTarget,
     "FactorPortfolio": FactorPortfolioStrategy,
+    "FactorTiming": FactorTimingStrategy,
 }
 
 
@@ -66,6 +68,7 @@ __all__ = [
     "CrossSectionalMomentum",
     "DualMomentum",
     "FactorPortfolioStrategy",
+    "FactorTimingStrategy",
     "Grid",
     "MACDCrossover",
     "MACrossover",

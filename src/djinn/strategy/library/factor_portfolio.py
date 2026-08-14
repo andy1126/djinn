@@ -46,6 +46,14 @@ class FactorPortfolioStrategy(Strategy):
         allocation: Allocation | None = None,
         fundamentals: PanelDict | None = None,
         preprocess: bool = True,
+        min_amount: float | None = None,
+        min_list_days: int | None = None,
+        exclude_st: bool = False,
+        names: dict[str, str] | None = None,
+        industry_neutral: bool = False,
+        industry_map: dict[str, str] | None = None,
+        max_sector_weight: float | None = None,
+        min_score_diff: float = 0.0,
     ) -> None:
         super().__init__()
         if not factors:
@@ -60,6 +68,15 @@ class FactorPortfolioStrategy(Strategy):
         self._fundamentals = fundamentals or {}
         self.preprocess = preprocess
         self._bars_seen = 0
+        # G1~G4:选股流水线增强(全部可选,默认关闭,保持 G0 等价性)
+        self.min_amount = min_amount
+        self.min_list_days = min_list_days
+        self.exclude_st = exclude_st
+        self.names = names
+        self.industry_neutral = industry_neutral
+        self.industry_map = industry_map
+        self.max_sector_weight = max_sector_weight
+        self.min_score_diff = min_score_diff
 
     def on_bar(self, ctx: Context) -> None:
         n = self._bars_seen
@@ -67,16 +84,36 @@ class FactorPortfolioStrategy(Strategy):
         # 非调仓日直接返回(首日 n=0 必调仓)
         if n % self.rebalance_freq != 0:
             return
+        selected, weights = self._select_pool(ctx)
+        if not selected:
+            return
+        selected_set = set(selected)
+        # 调出:当前持有但落选 → 清零
+        for s, pos in ctx.portfolio.positions.items():
+            if pos.qty > 0 and s not in selected_set:
+                ctx.order_target_percent(s, 0.0)
+                ctx.orders[-1].tag = "rebalance:out"
+        # 调入 / 调到目标权重
+        for s, w in weights.items():
+            ctx.order_target_percent(s, w)
+            ctx.orders[-1].tag = "rebalance:in"
+
+    def _select_pool(self, ctx: Context) -> tuple[list[str], dict[str, float]]:
+        """因子打分 → (名单, 名义权重 dict)。
+
+        防未来函数:只吃 ctx.data <= now 截面(经 _visible_panels)。
+        返回空名单表示本日无法选股(数据不足),调用方跳过。
+        """
         prices, ohlcv = self._visible_panels(ctx)
         if prices.empty:
-            return
+            return [], {}
         fundamentals = self._visible_fundamentals(ctx)
         # D3:截断到最大回看窗口(因子 rolling 只依赖最近 lb 日,截断后末行不变)
         lb = max((getattr(f, "max_lookback", 252) for f in self._factors), default=252)
         cutoff = pd.Timestamp(ctx.now) - pd.Timedelta(days=int(lb * 1.6) + 30)
         prices = prices.loc[prices.index >= cutoff]
         if len(prices) < 2:
-            return
+            return [], {}
         ohlcv = {k: v.loc[v.index >= cutoff] for k, v in ohlcv.items()}
         fundamentals = {k: df.loc[df.index >= cutoff] for k, df in fundamentals.items()}
         # 逐因子取最新截面
@@ -91,30 +128,140 @@ class FactorPortfolioStrategy(Strategy):
                 continue
             cross[f.name] = panel.iloc[-1]
         if not cross:
-            return
+            return [], {}
         cross_df = pd.DataFrame(cross)
         score = score_cross_section(cross_df, self._scores, self.preprocess)
-        selected = score.dropna().nlargest(self.n_stocks).index.tolist()
+        score = score.dropna()
+        if score.empty:
+            return [], {}
+        # G1:资格过滤(流动性/次新/ST/停牌),发生在 TopN 之前
+        eligible = self._tradable(ctx, list(score.index), prices, ohlcv)
+        if not eligible:
+            return [], {}
+        # G2:行业中性(或全池 TopN)
+        if self.industry_neutral and self.industry_map:
+            selected = self._pick_neutral(
+                score[eligible], self.industry_map, self.n_stocks
+            )
+        else:
+            if self.industry_neutral and not self.industry_map:
+                _log.warning("industry_neutral=True 但无行业映射,退化为全池 TopN")
+            selected = score[eligible].nlargest(self.n_stocks).index.tolist()
         if not selected:
-            return
+            return [], {}
+        # G4:换手惩罚(得分优势不足不换仓)
+        selected = self._apply_turnover_penalty(ctx, selected, score)
         last_close = prices.iloc[-1]
         price_map = {
             s: float(last_close[s]) for s in selected if pd.notna(last_close.get(s))
         }
-        # 打分 / 协方差供进阶分配器(score / risk_parity / min_variance / mean_variance)
-        scores_map = {s: float(score[s]) for s in selected}
+        scores_map = {s: float(score[s]) for s in selected if s in score.index}
         cov = self._selected_cov(prices, selected)
         weights = self.allocation.target_weights(
             selected, prices=price_map, scores=scores_map, cov=cov
         )
-        selected_set = set(selected)
-        # 调出:当前持有但落选 → 清零
-        for s, pos in ctx.portfolio.positions.items():
-            if pos.qty > 0 and s not in selected_set:
-                ctx.order_target_percent(s, 0.0)
-        # 调入 / 调到目标权重
+        # G3:行业暴露上限(策略层权重缩放)
+        weights = self._apply_sector_cap(weights)
+        return selected, weights
+
+    # ── G1:资格过滤 ─────────────────────────────────────
+    def _tradable(
+        self, ctx: Context, candidates: list[str], prices: Panel, ohlcv: PanelDict
+    ) -> list[str]:
+        """资格过滤:流动性 / 次新 / ST / 当日停牌(无行情)。"""
+        amount = ohlcv.get(COL_AMOUNT)
+        last_ts = prices.index[-1]
+        out: list[str] = []
+        for s in candidates:
+            if s not in prices.columns:
+                continue
+            ser = prices[s].dropna()
+            # 当日无行情(union 日历下停牌/未上市)→ 排除
+            if len(ser) == 0 or ser.index[-1] < last_ts:
+                continue
+            # 次新:数据首行距今日不足 min_list_days 个交易日
+            if self.min_list_days is not None and len(ser) < self.min_list_days:
+                continue
+            # 流动性:近 20 日平均成交额
+            if (
+                self.min_amount is not None
+                and amount is not None
+                and s in amount.columns
+            ):
+                amt = amount[s].dropna().iloc[-20:]
+                if len(amt) == 0 or float(amt.mean()) < self.min_amount:
+                    continue
+            # ST:名称含 "ST"
+            if self.exclude_st and self.names and "ST" in self.names.get(s, "").upper():
+                continue
+            out.append(s)
+        return out
+
+    # ── G2:行业中性选股 ─────────────────────────────────
+    @staticmethod
+    def _pick_neutral(
+        score: pd.Series, industry_map: dict[str, str], n: int
+    ) -> list[str]:
+        """行业中性 TopK:每行业 ceil(n/行业数) 名,超额砍尾、欠额全局补位。"""
+        groups: dict[str, list[str]] = {}
+        for s in score.index:
+            groups.setdefault(industry_map.get(s, "未知"), []).append(s)
+        k = max(1, -(-n // max(1, len(groups))))  # ceil(n/行业数)
+        picked: list[str] = []
+        ranked = score.sort_values(ascending=False)
+        for _ind, members in groups.items():
+            ordered = [s for s in ranked.index if s in members]
+            picked.extend(ordered[:k])
+        if len(picked) > n:  # 超额:全局按分砍尾
+            picked = [s for s in ranked.index if s in picked][:n]
+        elif len(picked) < n:  # 欠额:全局剩余按分补足
+            rest = [s for s in ranked.index if s not in picked]
+            picked.extend(rest[: n - len(picked)])
+        return picked
+
+    # ── G3:行业暴露上限 ─────────────────────────────────
+    def _apply_sector_cap(self, weights: dict[str, float]) -> dict[str, float]:
+        """行业权重超上限等比缩放到上限;腾出的权重留现金(不再分配)。"""
+        if self.max_sector_weight is None or not self.industry_map:
+            return weights
+        cap = self.max_sector_weight
+        by_ind: dict[str, float] = {}
         for s, w in weights.items():
-            ctx.order_target_percent(s, w)
+            ind = self.industry_map.get(s, "未知")
+            by_ind[ind] = by_ind.get(ind, 0.0) + w
+        scale = {
+            ind: min(1.0, cap / total) if total > cap else 1.0
+            for ind, total in by_ind.items()
+        }
+        if all(v == 1.0 for v in scale.values()):
+            return weights
+        return {
+            s: w * scale.get(self.industry_map.get(s, "未知"), 1.0)
+            for s, w in weights.items()
+        }
+
+    # ── G4:换手惩罚 ─────────────────────────────────────
+    def _apply_turnover_penalty(
+        self, ctx: Context, selected: list[str], score: pd.Series
+    ) -> list[str]:
+        """换手惩罚:新入选票相对被替换持仓票的得分优势不足 min_score_diff 时保留老票。"""
+        if self.min_score_diff <= 0:
+            return selected
+        holdings = [s for s, p in ctx.portfolio.positions.items() if p.qty > 0]
+        keep = [s for s in holdings if s not in selected and s in score.index]
+        if not keep:
+            return selected
+        new_in = [s for s in selected if s not in holdings]
+        out = list(selected)
+        for s_old in sorted(keep, key=lambda s: -score[s]):
+            if not new_in:
+                break
+            s_new = min(new_in, key=lambda s: score[s])
+            if score[s_new] - score[s_old] < self.min_score_diff:
+                out.remove(s_new)
+                out.append(s_old)
+                new_in.remove(s_new)
+        return out
 
     # ── 面板构建(<= now,防未来函数)──────────────────────
     def _visible_panels(self, ctx: Context) -> tuple[Panel, PanelDict]:

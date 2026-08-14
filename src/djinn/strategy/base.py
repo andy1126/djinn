@@ -151,11 +151,23 @@ class Context:
         now: date,
         data: DataView,
         portfolio: PortfolioView,
+        benchmark: tuple[str, DataView] | None = None,
     ) -> None:
         self.now = now
         self.data = data
         self.portfolio = portfolio
+        self.benchmark = benchmark
         self.orders: list[OrderIntent] = []
+
+    def benchmark_close(self) -> float | None:
+        """基准最近收盘价(无基准 / 无数据 → None)。"""
+        if self.benchmark is None:
+            return None
+        sym, view = self.benchmark
+        try:
+            return view.latest(sym, "close")
+        except Exception:
+            return None
 
     # ── 下单 ────────────────────────────────────────────
     def buy(

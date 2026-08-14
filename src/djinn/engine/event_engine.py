@@ -265,7 +265,18 @@ class EventDrivenEngine:
             # 3. SIGNAL:策略生成今日订单(进 pending,明日撮合)
             data_view = DataView(data, ts_date)
             portfolio_view = PortfolioView(account, prices_mtm, ts_date)
-            ctx = Context(now=ts_date, data=data_view, portfolio=portfolio_view)
+            bench_tuple = None
+            if benchmark is not None:
+                bench_tuple = (
+                    benchmark.symbol,
+                    DataView({benchmark.symbol: benchmark}, ts_date),
+                )
+            ctx = Context(
+                now=ts_date,
+                data=data_view,
+                portfolio=portfolio_view,
+                benchmark=bench_tuple,
+            )
             try:
                 strategy.on_bar(ctx)
             except Exception as e:
