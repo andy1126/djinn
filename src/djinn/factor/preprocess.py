@@ -110,7 +110,9 @@ def neutralize(
         yv = y.loc[syms].to_numpy()[mask]
         coef, *_ = np.linalg.lstsq(xv, yv, rcond=None)
         resid = yv - xv @ coef
-        row = y.copy()
+        # 被 mask 剔除的标的(缺行业/市值自变量)置 NaN,而非保留原值 ——
+        # 否则同一行混合"残差"与"原值"两种量纲,截面不可比(C5)。
+        row = pd.Series(np.nan, index=y.index)
         sel = np.array(syms, dtype=object)[mask]
         row.loc[list(sel)] = resid
         out.loc[ts] = row

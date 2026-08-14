@@ -39,3 +39,16 @@ class ReversalFactor(Factor):
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
         return -prices.pct_change(int(self.period))
+
+
+class High52WFactor(Factor):
+    """52 周高点距离 = close / 滚动最大 close - 1(负值,越接近 0 越强)。"""
+
+    name = "high_52w"
+    category = "momentum"
+    window = param(252, min=20, max=500, description="回看窗口(交易日)")
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        return prices / prices.rolling(int(self.window)).max() - 1.0

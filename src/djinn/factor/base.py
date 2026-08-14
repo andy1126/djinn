@@ -21,6 +21,7 @@ from djinn.strategy.parameter import (
     get_params,
     param,
 )
+from djinn.utils.exceptions import FactorError
 
 # 因子输入面板的别名(均为 index=date、columns=symbol 的宽表)。
 Panel = pd.DataFrame
@@ -40,6 +41,16 @@ class Factor(ABC):
     name: str = ""
     category: str = "generic"
 
+    # 声明式输入依赖:因子 compute() 所需的基本面 / 行情字段。默认空(纯价格因子)。
+    # 声明后,FactorEngine / API 任务在计算前校验字段存在且非全 NaN,
+    # 缺失即 fail-fast(取代静默产出 NaN)——见 :meth:`validate_inputs`。
+    required_fundamentals: tuple[str, ...] = ()
+    required_ohlcv: tuple[str, ...] = ()
+
+    # D3:因子滚动计算所需的最大回看窗口(交易日)。FactorPortfolioStrategy 据此
+    # 截断调仓日面板,避免对全历史重算。默认 252 覆盖所有内置价格类因子。
+    max_lookback: int = 252
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         setattr(cls, _PARAM_ATTR, collect_params(cls))
@@ -56,6 +67,33 @@ class Factor(ABC):
             if k not in declared:
                 raise ValueError(f"因子 {type(self).__name__} 无参数 {k!r}")
             setattr(self, k, v)
+
+    def validate_inputs(self, fundamentals: PanelDict, ohlcv: PanelDict) -> None:
+        """校验 ``compute()`` 所需的输入字段存在且非全 NaN,缺失即抛 FactorError。
+
+        由 :class:`~djinn.factor.engine.FactorEngine.compute` 与 API 后台任务在
+        计算前调用;纯价格因子(默认空依赖)直接通过。
+        """
+        missing_f = [
+            f
+            for f in self.required_fundamentals
+            if f not in fundamentals or fundamentals[f].isna().all().all()
+        ]
+        missing_o = [
+            f
+            for f in self.required_ohlcv
+            if f not in ohlcv or ohlcv[f].isna().all().all()
+        ]
+        if missing_f or missing_o:
+            parts: list[str] = []
+            if missing_f:
+                parts.append(f"基本面字段缺失或全空: {missing_f}")
+            if missing_o:
+                parts.append(f"行情字段缺失或全空: {missing_o}")
+            raise FactorError(
+                f"因子 {self.name} 所需输入不可用({'、'.join(parts)});"
+                "请检查 DEFAULT_FUNDAMENTAL_FIELDS / 行情面板或 provider 支持"
+            )
 
     @abstractmethod
     def compute(

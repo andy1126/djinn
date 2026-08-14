@@ -4,18 +4,26 @@ from __future__ import annotations
 
 from djinn.factor.base import Factor
 from djinn.factor.library.growth import ProfitGrowthFactor, RevenueGrowthFactor
-from djinn.factor.library.liquidity import AmihudFactor, TurnoverFactor
-from djinn.factor.library.momentum import MomentumFactor, ReversalFactor
+from djinn.factor.library.liquidity import (
+    AmihudFactor,
+    TurnoverChangeFactor,
+    TurnoverFactor,
+)
+from djinn.factor.library.momentum import High52WFactor, MomentumFactor, ReversalFactor
 from djinn.factor.library.quality import (
+    AccrualsFactor,
+    AssetGrowthFactor,
     GrossMarginFactor,
     NetProfitMarginFactor,
     ROEFactor,
 )
 from djinn.factor.library.size import SizeFactor
-from djinn.factor.library.value import BPFactor, EPFactor, SPFactor
+from djinn.factor.library.value import BPFactor, CFPFactor, EPFactor, SPFactor
 from djinn.factor.library.volatility import (
     BetaFactor,
     DownsideVolatilityFactor,
+    IdioVolFactor,
+    MaxLotteryFactor,
     VolatilityFactor,
 )
 
@@ -23,17 +31,24 @@ from djinn.factor.library.volatility import (
 FACTOR_REGISTRY: dict[str, type[Factor]] = {
     "momentum": MomentumFactor,
     "reversal": ReversalFactor,
+    "high_52w": High52WFactor,
     "volatility": VolatilityFactor,
     "downside_volatility": DownsideVolatilityFactor,
+    "max_lottery": MaxLotteryFactor,
+    "idio_vol": IdioVolFactor,
     "beta": BetaFactor,
     "turnover": TurnoverFactor,
+    "turnover_chg": TurnoverChangeFactor,
     "amihud": AmihudFactor,
     "ep": EPFactor,
     "bp": BPFactor,
     "sp": SPFactor,
+    "cfp": CFPFactor,
     "roe": ROEFactor,
     "gross_margin": GrossMarginFactor,
     "net_profit_margin": NetProfitMarginFactor,
+    "accruals": AccrualsFactor,
+    "asset_growth": AssetGrowthFactor,
     "revenue_yoy": RevenueGrowthFactor,
     "profit_yoy": ProfitGrowthFactor,
     "size": SizeFactor,
@@ -53,13 +68,19 @@ def make_factor(name: str, **params: object) -> Factor:
 
 
 __all__ = [
+    "AccrualsFactor",
     "AmihudFactor",
+    "AssetGrowthFactor",
     "BPFactor",
     "BetaFactor",
+    "CFPFactor",
     "DownsideVolatilityFactor",
     "EPFactor",
     "FACTOR_REGISTRY",
     "GrossMarginFactor",
+    "High52WFactor",
+    "IdioVolFactor",
+    "MaxLotteryFactor",
     "MomentumFactor",
     "NetProfitMarginFactor",
     "ProfitGrowthFactor",
@@ -68,6 +89,7 @@ __all__ = [
     "RevenueGrowthFactor",
     "SPFactor",
     "SizeFactor",
+    "TurnoverChangeFactor",
     "TurnoverFactor",
     "VolatilityFactor",
     "get_factor_class",

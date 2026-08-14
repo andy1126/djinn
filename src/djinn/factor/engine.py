@@ -23,6 +23,9 @@ from djinn.data.schema import (
     COL_HIGH,
     COL_LOW,
     COL_OPEN,
+    COL_PB,
+    COL_PE,
+    COL_PS,
     COL_VOLUME,
     Adjust,
     Market,
@@ -41,11 +44,19 @@ DEFAULT_FUNDAMENTAL_FIELDS: tuple[str, ...] = (
     "ps",
     "roe",
     "gross_margin",
+    "net_profit",
+    "revenue",
+    "ocf",
+    "total_assets",
     "revenue_yoy",
     "profit_yoy",
 )
 
 _HISTORY_LOOKBACK_DAYS = 400
+
+# 估值类字段:优先走 provider 的日频估值序列(``get_daily_valuation``),消除
+# "用今日快照给历史打分"的前视;无日频估值时退化为快照口径(见 ``_asof_field_panel``)。
+VALUATION_FIELDS: tuple[str, ...] = (COL_PE, COL_PB, COL_PS)
 
 
 @dataclass
@@ -125,6 +136,7 @@ class FactorEngine:
         data: dict[str, Panel] = {}
         for f in factors:
             _log.info("计算因子 %s(%d 标的)", f.name, len(universe))
+            f.validate_inputs(fundamentals, ohlcv)
             data[f.name] = f.compute(prices, ohlcv, fundamentals)
         return FactorPanel(data=data)
 
@@ -197,14 +209,27 @@ class FactorEngine:
         hist_start = start - timedelta(days=_HISTORY_LOOKBACK_DAYS)
         for sym in universe:
             series: pd.Series | None = None
-            try:
-                hist = source.get_history(sym, hist_start, end, market)
-                if field in hist.columns and "announce_date" in hist.columns:
-                    series = _asof_series(
-                        hist[field], hist["announce_date"], trading_index
-                    )
-            except Exception as e:
-                _log.debug("%s 字段 %s 时序不可用: %s", sym, field, e)
+            # 估值类字段:优先日频估值序列(真正 point-in-time,无前视)
+            if field in VALUATION_FIELDS:
+                try:
+                    daily = source.get_daily_valuation(sym, start, end, market)
+                    if daily is not None and len(daily) and field in daily.columns:
+                        series = (
+                            pd.to_numeric(daily[field], errors="coerce")
+                            .reindex(trading_index)
+                            .ffill()
+                        )
+                except Exception as e:
+                    _log.debug("%s 字段 %s 日频估值不可用: %s", sym, field, e)
+            if series is None:
+                try:
+                    hist = source.get_history(sym, hist_start, end, market)
+                    if field in hist.columns and "announce_date" in hist.columns:
+                        series = _asof_series(
+                            hist[field], hist["announce_date"], trading_index
+                        )
+                except Exception as e:
+                    _log.debug("%s 字段 %s 时序不可用: %s", sym, field, e)
             if series is None:
                 # 退化:用 when=end 的快照常数填充(估值类近似,非严格 PIT)
                 try:

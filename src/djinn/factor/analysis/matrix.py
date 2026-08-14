@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from djinn.factor.analysis.fmb import fama_macbeth
 from djinn.factor.analysis.forward_returns import compute_forward_returns
 from djinn.factor.analysis.ic import compute_ic, ic_summary
 from djinn.factor.analysis.report import rank_turnover
@@ -46,6 +47,7 @@ class FactorMatrixReport:
     correlation: pd.DataFrame  # index/columns=因子名,值的逐日截面相关跨日均值
     ic_summary: dict[int, dict[str, dict[str, float]]]  # period -> factor -> summary
     turnover: dict[str, float]  # factor -> rank 换手代理
+    fmb: dict[str, Any] | None = None  # Fama-MacBeth 回归结果(因子 ≥2 时)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON 友好 dict(沿用 {index,columns,data} 约定)。"""
@@ -66,6 +68,7 @@ class FactorMatrixReport:
                 for p, per_factor in self.ic_summary.items()
             },
             "turnover": {name: _finite(v) for name, v in self.turnover.items()},
+            "fmb": self.fmb,
         }
 
 
@@ -112,9 +115,17 @@ def analyze_factor_matrix(
     # 换手
     turnover = {name: rank_turnover(panel) for name, panel in factors.items()}
 
+    # Fama-MacBeth(因子 ≥2 时):多因子风险溢价显著性
+    fmb: dict[str, Any] | None = None
+    if n >= 2 and periods:
+        fmb = fama_macbeth(
+            factors, fwd[next(iter(periods))], standardize=True
+        ).to_dict()
+
     return FactorMatrixReport(
         factors=names,
         correlation=corr,
         ic_summary=ic_summ,
         turnover=turnover,
+        fmb=fmb,
     )

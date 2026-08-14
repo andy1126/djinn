@@ -14,6 +14,7 @@ class SizeFactor(Factor):
 
     name = "size"
     category = "size"
+    required_fundamentals = (COL_MARKET_CAP,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict

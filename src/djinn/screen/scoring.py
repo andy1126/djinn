@@ -19,7 +19,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from djinn.factor.base import Panel, PanelDict
 from djinn.factor.engine import FactorPanel
+from djinn.factor.preprocess import neutralize as preprocess_neutralize
 from djinn.factor.preprocess import standardize, winsorize
+from djinn.utils.logging import get_logger
+
+_log = get_logger(__name__)
 
 
 class FactorScore(BaseModel):
@@ -38,6 +42,10 @@ def score_cross_section(
     cross: pd.DataFrame,
     scores: list[FactorScore],
     preprocess: bool = True,
+    *,
+    neutralize: bool = False,
+    industry_map: dict[str, str] | None = None,
+    log_mktcap: pd.Series | None = None,
 ) -> pd.Series:
     """单截面合成打分。
 
@@ -45,6 +53,9 @@ def score_cross_section(
         cross: index=symbol、columns=因子名 的因子值截面。
         scores: 各因子的权重 / 方向。
         preprocess: 是否逐因子去极值 + z-score 标准化(量纲统一,推荐)。
+        neutralize: 是否在去极值后、标准化前做行业/市值中性化(需给 industry_map
+            或 log_mktcap,否则 warning 并跳过)。
+        industry_map: symbol → 行业名;log_mktcap: index=symbol 的对数市值 Series。
 
     Returns:
         index=symbol 的综合得分 Series(越高越优)。
@@ -58,7 +69,24 @@ def score_cross_section(
         # 转置成 1×N 单行面板,复用 preprocess 的行向(截面)实现
         row = cross[[fs.factor]].T.astype(float)
         if preprocess:
-            row = standardize(winsorize(row))
+            row = winsorize(row)
+            if neutralize:
+                if industry_map is not None or log_mktcap is not None:
+                    logcap_panel: Panel | None = None
+                    if log_mktcap is not None:
+                        logcap_panel = pd.DataFrame(
+                            [log_mktcap.reindex(cross.index).astype(float).to_numpy()],
+                            index=row.index,
+                            columns=cross.index,
+                        )
+                    row = preprocess_neutralize(
+                        row, industry_map=industry_map, log_mktcap=logcap_panel
+                    )
+                else:
+                    _log.warning(
+                        "neutralize=True 但缺 industry_map/log_mktcap,跳过中性化"
+                    )
+            row = standardize(row)
         vals = row.iloc[0] * float(fs.direction)
         total = total + vals.fillna(0.0) * float(fs.weight)
     return total

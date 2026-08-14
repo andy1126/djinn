@@ -12,6 +12,7 @@ class RevenueGrowthFactor(Factor):
 
     name = "revenue_yoy"
     category = "growth"
+    required_fundamentals = (COL_REVENUE_YOY,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -24,6 +25,7 @@ class ProfitGrowthFactor(Factor):
 
     name = "profit_yoy"
     category = "growth"
+    required_fundamentals = (COL_PROFIT_YOY,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict

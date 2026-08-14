@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from djinn.data.schema import COL_PB, COL_PE, COL_PS
+from djinn.data.schema import COL_MARKET_CAP, COL_OCF, COL_PB, COL_PE, COL_PS
 from djinn.factor.base import Factor, Panel, PanelDict
 from djinn.factor.library._util import fund_panel
 
@@ -18,6 +18,7 @@ class EPFactor(Factor):
 
     name = "ep"
     category = "value"
+    required_fundamentals = (COL_PE,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -30,6 +31,7 @@ class BPFactor(Factor):
 
     name = "bp"
     category = "value"
+    required_fundamentals = (COL_PB,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -42,8 +44,24 @@ class SPFactor(Factor):
 
     name = "sp"
     category = "value"
+    required_fundamentals = (COL_PS,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
         return _reciprocal(fundamentals, COL_PS, prices)
+
+
+class CFPFactor(Factor):
+    """现金市值比 = 经营现金流 / 总市值(越高越便宜)。"""
+
+    name = "cfp"
+    category = "value"
+    required_fundamentals = (COL_OCF, COL_MARKET_CAP)
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        ocf = fund_panel(fundamentals, COL_OCF, prices)
+        cap = fund_panel(fundamentals, COL_MARKET_CAP, prices)
+        return ocf / cap.where(cap > 0)

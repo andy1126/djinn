@@ -14,6 +14,8 @@ class TurnoverFactor(Factor):
     name = "turnover"
     category = "liquidity"
     period = param(20, min=1, max=120, description="换手率平滑窗口(交易日)")
+    required_fundamentals = (COL_FLOAT_CAP,)
+    required_ohlcv = (COL_AMOUNT,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -35,6 +37,7 @@ class AmihudFactor(Factor):
     name = "amihud"
     category = "liquidity"
     period = param(20, min=1, max=120, description="平滑窗口(交易日)")
+    required_ohlcv = (COL_AMOUNT,)
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -47,3 +50,29 @@ class AmihudFactor(Factor):
         amt = amount.reindex(index=prices.index, columns=prices.columns)
         illiq = prices.pct_change().abs() / amt.where(amt > 0)
         return illiq.rolling(int(self.period)).mean()
+
+
+class TurnoverChangeFactor(Factor):
+    """换手率变化率 = 短期均换手 / 长期均换手 - 1。"""
+
+    name = "turnover_chg"
+    category = "liquidity"
+    short = param(20, min=5, max=60, description="短期窗口(交易日)")
+    long = param(120, min=30, max=250, description="长期窗口(交易日)")
+    required_fundamentals = (COL_FLOAT_CAP,)
+    required_ohlcv = (COL_AMOUNT,)
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        amount = ohlcv.get(COL_AMOUNT)
+        float_cap = fundamentals.get(COL_FLOAT_CAP)
+        if amount is None or float_cap is None:
+            return pd.DataFrame(
+                float("nan"), index=prices.index, columns=prices.columns
+            )
+        cap = float_cap.reindex(index=prices.index, columns=prices.columns)
+        daily_to = amount / cap.replace(0.0, pd.NA)  # 日换手率
+        short_to = daily_to.rolling(int(self.short)).mean()
+        long_to = daily_to.rolling(int(self.long)).mean()
+        return short_to / long_to.replace(0.0, pd.NA) - 1.0
