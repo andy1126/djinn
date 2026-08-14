@@ -541,6 +541,21 @@ def test_backtest_report_fallback_reruns_when_no_cache() -> None:
     assert rep.json()["metrics"]  # 非空指标
 
 
+def test_sparse_positions_roundtrip() -> None:
+    """D5:positions/weights 稀疏序列化 roundtrip 后与原面板逐值相等。"""
+    from djinn.api.report_store import _df_from_sparse, _df_to_sparse
+
+    idx = pd.DatetimeIndex(pd.bdate_range("2024-01-01", periods=5))
+    df = pd.DataFrame(
+        {"A": [0.0, 100.0, 100.0, 0.0, 0.0], "B": [50.0, 50.0, 0.0, 0.0, 0.0]},
+        index=idx,
+    )
+    sparse = _df_to_sparse(df)
+    assert len(sparse["rows"]) < len(df)  # 有变动收敛,行数更少
+    rebuilt = _df_from_sparse(sparse, idx, ["A", "B"])
+    pd.testing.assert_frame_equal(rebuilt, df)
+
+
 # ── 多因子诊断(/factor-matrix)─────────────────────────────
 def test_factor_matrix_requires_universe() -> None:
     resp = client.post(

@@ -158,3 +158,25 @@ def test_insufficient_cash_shrinks_cn():
     r2 = check_constraints("buy", Decimal(200), bar, 99.0, Decimal("15000"), 100.0, con)
     assert r2.ok
     assert r2.adjusted_qty == Decimal("100")
+
+
+def test_volume_cap_shrinks_order():
+    """成交量上限(A11):买 50 万股、volume=1e6、max_share=0.1 → 缩减到 10 万。"""
+    con = TradeConstraints(market=Market.US, enforce_lot=True, max_volume_share=0.1)
+    bar = _bar("AAPL", 100.0, volume=1_000_000.0)
+    r = check_constraints(
+        "buy", Decimal(500_000), bar, 99.0, Decimal("100000000"), 100.0, con
+    )
+    assert r.ok
+    assert r.adjusted_qty == Decimal("100000")
+
+
+def test_volume_cap_zero_disabled():
+    """默认 max_volume_share=0 不生效(回归)。"""
+    con = TradeConstraints(market=Market.US, enforce_lot=True)
+    bar = _bar("AAPL", 100.0, volume=1_000_000.0)
+    r = check_constraints(
+        "buy", Decimal(500_000), bar, 99.0, Decimal("100000000"), 100.0, con
+    )
+    assert r.ok
+    assert r.adjusted_qty == Decimal("500000")

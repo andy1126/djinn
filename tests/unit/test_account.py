@@ -82,6 +82,35 @@ def test_avg_cost_weighted():
     assert pos.avg_cost == Decimal("55.00")  # (5000+6000)/200
 
 
+def test_dividend_cash():
+    """现金分红:reinvest=False 时 cash 增加 per_share × qty。"""
+    a = Account(initial_cash=Decimal("100000"))
+    a.buy("AAPL", Decimal(1000), Decimal("50"), Decimal("0"))
+    a.receive_dividend("AAPL", Decimal("0.5"))
+    assert a.cash == Decimal("100000") - Decimal("50000") + Decimal("500")
+
+
+def test_split_applied():
+    """拆股 ratio=2:股数翻倍、均价减半、市值不变。"""
+    a = Account(initial_cash=Decimal("100000"))
+    a.buy("AAPL", Decimal(100), Decimal("50"), Decimal("0"))
+    a.apply_split("AAPL", Decimal("2"))
+    pos = a.positions["AAPL"]
+    assert pos.qty == Decimal("200.0000")
+    assert pos.avg_cost == Decimal("25.00")
+
+
+def test_reinvest_dilutes_cost():
+    """分红再投资:均价按总成本不变摊薄。"""
+    a = Account(initial_cash=Decimal("100000"))
+    a.buy("AAPL", Decimal(100), Decimal("50"), Decimal("0"))  # 成本 5000,avg 50
+    a.receive_dividend("AAPL", Decimal("5"), reinvest=True, price=Decimal("50"))
+    pos = a.positions["AAPL"]
+    # 分红 500,再投 10 股 → 总成本 5000,股数 110 → avg = 5000/110
+    assert pos.qty == Decimal("110.0000")
+    assert pos.avg_cost == pytest.approx(Decimal("45.4545"), abs=Decimal("0.01"))
+
+
 # ── 属性测试:资金守恒 ──────────────────────────────────
 @given(
     n_buys=st.integers(min_value=1, max_value=10),

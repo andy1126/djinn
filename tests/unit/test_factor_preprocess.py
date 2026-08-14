@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from djinn.factor.preprocess import neutralize, standardize, winsorize
+from djinn.factor.preprocess import neutralize, orthogonalize, standardize, winsorize
 
 
 def _panel(rows: int = 5, cols: int = 6, seed: int = 0) -> pd.DataFrame:
@@ -121,3 +121,27 @@ def test_score_cross_section_neutralize() -> None:
     )
     assert abs(out[[s for s in syms if industry_map[s] == "tech"]].mean()) < 0.5
     assert abs(out[[s for s in syms if industry_map[s] == "fin"]].mean()) < 0.5
+
+
+def test_orthogonalize_perfect_correlation() -> None:
+    """完全相关因子正交化后:后者残差 ≈ 0。"""
+    idx = pd.DatetimeIndex([date(2024, 1, 1) + timedelta(days=i) for i in range(5)])
+    syms = ["A", "B", "C", "D"]
+    f1 = pd.DataFrame([[1.0, 2.0, 3.0, 4.0]] * 5, index=idx, columns=syms)
+    f2 = f1 * 2.0
+    out = orthogonalize({"f1": f1, "f2": f2})
+    assert out["f1"].equals(f1)
+    assert out["f2"].abs().max().max() < 1e-10
+
+
+def test_orthogonalize_removes_correlation() -> None:
+    """高相关因子正交化后:后者与前者截面相关 ≈ 0。"""
+    rng = np.random.default_rng(20)
+    rows, cols = 20, 20
+    idx = pd.DatetimeIndex([date(2024, 1, 1) + timedelta(days=i) for i in range(rows)])
+    syms = [f"S{j}" for j in range(cols)]
+    f1 = pd.DataFrame(rng.normal(size=(rows, cols)), index=idx, columns=syms)
+    f2 = f1 + 0.5 * pd.DataFrame(rng.normal(size=(rows, cols)), index=idx, columns=syms)
+    out = orthogonalize({"f1": f1, "f2": f2})
+    cors = [out["f2"].loc[t].corr(out["f1"].loc[t]) for t in idx]
+    assert abs(float(np.nanmean(np.abs(cors)))) < 0.1
