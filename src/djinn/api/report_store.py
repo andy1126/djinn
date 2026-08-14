@@ -147,10 +147,12 @@ def serialize_report(report: Report) -> dict[str, Any]:
         "rolling_volatility": _series_to_list(report.rolling_volatility),
         "trades": trades_out,
         "rejections": [_dictify(r) for r in report.rejections],
-        "positions": _df_to_dict(report.positions),
-        "weights": _df_to_dict(report.weights),
+        # D5:positions/weights 稀疏化(变动行),降磁盘 JSON 体积
+        "positions": _df_to_sparse(report.positions),
+        "weights": _df_to_sparse(report.weights),
         "attribution": report.attribution,
         "factor_exposure": report.factor_exposure,
+        "v": 2,
     }
 
 
@@ -203,6 +205,43 @@ def _df_from_dict(d: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(data, index=dt_idx, columns=cols)
 
 
+def _df_to_sparse(df: pd.DataFrame | None) -> dict[str, Any]:
+    """稠密 DataFrame → 稀疏变动行(D5):``{"dates":[str], "rows":[{"date","values"}]}``。
+
+    仅输出非零值发生变化的行 + 首行;持仓/权重面板大量 0,稀疏后 JSON 体积大幅下降。
+    """
+    if df is None or df.empty:
+        return {"dates": [], "rows": []}
+    rows_out: list[dict[str, Any]] = []
+    prev: dict[str, float] | None = None
+    for ts, row in df.iterrows():
+        cur = {str(c): float(row[c]) for c in df.columns if float(row[c]) != 0.0}
+        if prev is None or cur != prev:
+            rows_out.append({"date": str(ts), "values": cur})
+            prev = cur
+    return {"dates": [r["date"] for r in rows_out], "rows": rows_out}
+
+
+def _df_from_sparse(
+    d: dict[str, Any], full_index: pd.DatetimeIndex, columns: list[str]
+) -> pd.DataFrame:
+    """稀疏 → 稠密(D5):reindex 到全量日历 + ffill + fillna(0)。"""
+    rows = d.get("rows", [])
+    if not rows:
+        return pd.DataFrame(0.0, index=full_index, columns=columns)
+    idx = pd.to_datetime([r["date"] for r in rows])
+    col_pos = {c: i for i, c in enumerate(columns)}
+    n = len(idx)
+    data_arr = [[0.0] * n for _ in columns]
+    for i, r in enumerate(rows):
+        for sym, val in r["values"].items():
+            p = col_pos.get(sym)
+            if p is not None:
+                data_arr[p][i] = float(val)
+    df = pd.DataFrame({c: data_arr[col_pos[c]] for c in columns}, index=idx)
+    return df.reindex(full_index).ffill().fillna(0.0)
+
+
 def rebuild_report(payload: dict[str, Any]) -> Report:
     """把 :func:`serialize_report` 的 payload 还原为 :class:`Report`(供导出复用,
     避免在 ``/export`` 端点重跑回测)。``metrics`` / ``trade_stats`` /
@@ -226,6 +265,18 @@ def rebuild_report(payload: dict[str, Any]) -> Report:
         if reject_raw and isinstance(reject_raw[0], dict)
         else reject_raw
     )
+    # D5:positions/weights 稀疏(v2)时用 equity 全量日历 + symbols 重建稠密
+    equity_series = _series_from_list(payload.get("equity_curve") or {})
+    full_index = pd.DatetimeIndex(equity_series.index)
+    symbols = [str(s) for s in (payload.get("symbols") or [])]
+    if payload.get("v") == 2:
+        positions_df = _df_from_sparse(
+            payload.get("positions") or {}, full_index, symbols
+        )
+        weights_df = _df_from_sparse(payload.get("weights") or {}, full_index, symbols)
+    else:
+        positions_df = _df_from_dict(payload.get("positions") or {})
+        weights_df = _df_from_dict(payload.get("weights") or {})
     return Report(
         metrics=_DictLike(payload.get("metrics") or {}),  # type: ignore[arg-type]
         trade_stats=_DictLike(payload.get("trade_stats") or {}),  # type: ignore[arg-type]
@@ -247,12 +298,33 @@ def rebuild_report(payload: dict[str, Any]) -> Report:
         rolling_volatility=_series_from_list(payload.get("rolling_volatility") or {}),
         trades=_trades_from_list(payload.get("trades") or []),
         rejections=rejections,
-        positions=_df_from_dict(payload.get("positions") or {}),
-        weights=_df_from_dict(payload.get("weights") or {}),
+        positions=positions_df,
+        weights=weights_df,
         symbols=payload.get("symbols") or [],
         attribution=payload.get("attribution"),
         factor_exposure=payload.get("factor_exposure"),
     )
+
+
+def densify_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """把 v2(稀疏)positions/weights 还原为稠密 DataFrameData,供前端 /report 直读。
+
+    磁盘缓存存稀疏(降体积);前端 PositionAreaChart/WeightHeatmap 消费稠密
+    ``{index, columns, data}`` 格式,故 /report 返回前先 densify。
+    """
+    if payload.get("v") != 2:
+        return payload
+    equity = _series_from_list(payload.get("equity_curve") or {})
+    full_index = pd.DatetimeIndex(equity.index)
+    symbols = [str(s) for s in (payload.get("symbols") or [])]
+    out = dict(payload)
+    out["positions"] = _df_to_dict(
+        _df_from_sparse(payload.get("positions") or {}, full_index, symbols)
+    )
+    out["weights"] = _df_to_dict(
+        _df_from_sparse(payload.get("weights") or {}, full_index, symbols)
+    )
+    return out
 
 
 def _trades_from_list(trades: list[dict[str, Any]]) -> list[Any]:

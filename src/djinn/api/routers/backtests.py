@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse
 
 from djinn.api.deps import get_job_registry, get_registry
 from djinn.api.jobs import JobRecord, JobRegistry, make_title, run_backtest_job
+from djinn.api.report_store import densify_payload, rebuild_report
 from djinn.api.report_store import load as load_report
-from djinn.api.report_store import rebuild_report
 from djinn.api.schemas import BacktestRequest, JobCreated, JobStatus
 from djinn.data.provider import ProviderRegistry
 from djinn.io import export_csv, export_excel
@@ -84,7 +84,7 @@ async def get_backtest_report(
         raise HTTPException(status_code=400, detail="任务未完成")
     payload = load_report(job_id)
     if payload is not None:
-        return {"job_id": job_id, **payload}
+        return {"job_id": job_id, **densify_payload(payload)}
     # 回退:旧任务无缓存 → 重跑一次并落盘
     meta = (job.result or {}).get("__meta__", {})
     config_dict = meta.get("config", {})
@@ -101,7 +101,7 @@ async def get_backtest_report(
         )
         payload = serialize_report(result.report)
         save(job_id, payload)
-        return {"job_id": job_id, **payload}
+        return {"job_id": job_id, **densify_payload(payload)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
 
