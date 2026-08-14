@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Button, Card, DatePicker, Form, Input, InputNumber, message, Progress, Select, Space, Table, Tag, Typography,
@@ -46,12 +46,24 @@ function toCsv(rows: Record<string, unknown>[]): string {
  */
 export default function ScreenerPage() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [jobId, setJobId] = useState<string | null>(null)
   const [conditions, setConditions] = useState<Array<{ field: string; op: string; value: string }>>([
     { field: 'pe', op: 'lt', value: '30' },
   ])
   const [scores, setScores] = useState<Array<{ factor: string; weight: number; direction: 1 | -1 }>>([])
   const [topN, setTopN] = useState<number | null>(10)
+
+  // F14:深链 —— 从 URL ?job=<id> 恢复查看的任务;切换任务时写回 URL
+  useEffect(() => {
+    const j = searchParams.get('job')
+    if (j) setJobId(j)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const selectJob = (id: string) => {
+    setJobId(id)
+    setSearchParams({ job: id }, { replace: true })
+  }
 
   const { data: factorsResp } = useQuery({ queryKey: ['factors'], queryFn: listFactors })
   const factors: FactorInfo[] = factorsResp?.factors || []
@@ -155,7 +167,7 @@ export default function ScreenerPage() {
   const mut = useMutation({
     mutationFn: createScreen,
     onSuccess: (resp) => {
-      setJobId(resp.job_id)
+      selectJob(resp.job_id)
       message.success(`选股任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['screen-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['screen-jobs'] })
@@ -322,6 +334,10 @@ export default function ScreenerPage() {
                 <Space wrap>
                   <Button size="small" onClick={exportCsv}>导出 CSV</Button>
                   <Button size="small" type="primary" onClick={startBacktest}>用这组股票发起回测</Button>
+                  <Button
+                    size="small"
+                    onClick={() => { navigator.clipboard.writeText(location.href); message.success('链接已复制') }}
+                  >复制链接</Button>
                   <Typography.Text type="secondary">得分降序(若有打分因子)</Typography.Text>
                 </Space>
                 <Table
@@ -355,7 +371,7 @@ export default function ScreenerPage() {
             { title: '阶段', dataIndex: 'stage', key: 'stage' },
             {
               title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
-                <Button size="small" onClick={() => setJobId(r.job_id)}>查看</Button>
+                <Button size="small" onClick={() => selectJob(r.job_id)}>查看</Button>
               ),
             },
           ]}

@@ -8,6 +8,7 @@ import ProfilePicker from '@/components/ProfilePicker'
 import StrategyParamForm from '@/components/StrategyParamForm'
 import { useJobProgress } from '@/hooks/useJobProgress'
 import { useConfigStore } from '@/store/configStore'
+import { useNotifyStore } from '@/store/notifyStore'
 import type { BacktestConfig, Profile, StrategyInfo } from '@/types'
 
 const ALLOC_LABEL: Record<string, string> = {
@@ -29,6 +30,7 @@ export default function BacktestRunPage() {
   const [form] = Form.useForm()
   const [jobId, setJobId] = useState<string | null>(null)
   const { job: progress, via } = useJobProgress(jobId)
+  const pushNotification = useNotifyStore((s) => s.push)
 
   const { data: strategiesResp } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
   const strategies: StrategyInfo[] = strategiesResp?.strategies || []
@@ -53,14 +55,16 @@ export default function BacktestRunPage() {
     })
   }, [config, form])
 
-  // 任务完成 / 失败后的跳转与提示
+  // 任务完成 / 失败后的跳转与提示 + 全局通知(F16)
   useEffect(() => {
     if (!progress) return
     if (progress.status === 'done') {
       message.success('回测完成')
+      pushNotification({ kind: 'backtest', title: '回测完成', status: 'done', jobId: progress.job_id })
       setTimeout(() => navigate(`/results/${progress.job_id}`), 500)
     } else if (progress.status === 'error') {
       message.error(`回测失败: ${progress.error}`)
+      pushNotification({ kind: 'backtest', title: '回测失败', status: 'error', jobId: progress.job_id })
     }
   }, [progress?.status])
 

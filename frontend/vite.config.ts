@@ -19,4 +19,25 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // F8:手动分包,避免 echarts/editor/antd 全进首屏单 chunk
+        manualChunks: {
+          echarts: ['echarts', 'echarts-for-react'],
+          editor: ['@uiw/react-codemirror', '@codemirror/lang-python'],
+          antd: ['antd', '@ant-design/icons'],
+          vendor: [
+            'react',
+            'react-dom',
+            'react-router-dom',
+            'axios',
+            'zustand',
+            '@tanstack/react-query',
+            'dayjs',
+          ],
+        },
+      },
+    },
+  },
 })

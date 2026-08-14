@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, theme } from 'antd'
+import { Suspense, useEffect, useState } from 'react'
+import { Badge, ConfigProvider, Dropdown, Layout, Menu, Spin, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,7 +11,10 @@ import {
   BarChartOutlined,
   ThunderboltOutlined,
   SettingOutlined,
+  BellOutlined,
 } from '@ant-design/icons'
+import { useUiStore } from '@/store/uiStore'
+import { useNotifyStore } from '@/store/notifyStore'
 
 const { Header, Sider, Content } = Layout
 
@@ -101,6 +104,10 @@ export default function LayoutShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = theme.useToken()
+  const dark = useUiStore((s) => s.dark)
+  const notifyItems = useNotifyStore((s) => s.items)
+  const notifyUnread = useNotifyStore((s) => s.unread)
+  const markAllRead = useNotifyStore((s) => s.markAllRead)
   const [openKeys, setOpenKeys] = useState<string[]>(() => openGroupFor(location.pathname))
 
   useEffect(() => {
@@ -109,7 +116,13 @@ export default function LayoutShell() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#1677ff' } }}>
+      <ConfigProvider
+        locale={zhCN}
+        theme={{
+          algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+          token: { colorPrimary: '#1677ff' },
+        }}
+      >
         <Layout style={{ minHeight: '100vh' }}>
           <Sider width={224} style={{ background: token.colorBgContainer }}>
             <div style={{ height: 56, padding: 16, fontSize: 18, fontWeight: 700, color: token.colorPrimary }}>
@@ -128,11 +141,47 @@ export default function LayoutShell() {
             />
           </Sider>
           <Layout>
-            <Header style={{ background: token.colorBgContainer, padding: '0 24px' }}>
+            <Header
+              style={{
+                background: token.colorBgContainer,
+                padding: '0 24px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
               <h2 style={{ margin: 0, lineHeight: '64px' }}>多市场量化回测平台</h2>
+              <Dropdown
+                trigger={['click']}
+                onOpenChange={(open) => { if (open) markAllRead() }}
+                menu={{
+                  items: notifyItems.length
+                    ? notifyItems.map((n) => ({
+                        key: n.id,
+                        label: `${n.title} — ${n.status}`,
+                        onClick: () => {
+                          const kindPath: Record<string, string> = {
+                            backtest: '/results',
+                            sweep: '/sweep',
+                            'factor-analysis': '/factors',
+                            'factor-matrix': '/factor-matrix',
+                            screen: '/screener',
+                          }
+                          navigate(`${kindPath[n.kind] ?? '/results'}/${n.jobId}`)
+                        },
+                      }))
+                    : [{ key: 'empty', label: '暂无通知', disabled: true }],
+                }}
+              >
+                <Badge count={notifyUnread} size="small">
+                  <BellOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
+                </Badge>
+              </Dropdown>
             </Header>
             <Content style={{ padding: 24, overflow: 'auto' }}>
-              <Outlet />
+              <Suspense fallback={<Spin style={{ display: 'block', margin: '80px auto' }} />}>
+                <Outlet />
+              </Suspense>
             </Content>
           </Layout>
         </Layout>
