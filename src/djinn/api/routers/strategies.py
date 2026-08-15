@@ -49,13 +49,25 @@ def _builtin_info(name: str) -> StrategyInfo:
     )
 
 
+# 编译结果缓存:(name, kind, source_code) → (params, error)。
+# 列表端点对每个用户策略重新编译,而 Pine 策略的 pynescript 转译首期 ~2.3s——
+# 缓存避免每次请求都重转译(源码不变即命中;编辑后 source_code 变 → 自动失效)。
+_COMPILE_CACHE: dict[tuple[str, str, str], tuple[list[dict[str, Any]], str]] = {}
+
+
 def _compiled(rec: UserStrategyRecord) -> tuple[list[dict[str, Any]], str]:
-    """编译用户策略,返回 (params, error);失败时 params 为空。"""
+    """编译用户策略,返回 (params, error);失败时 params 为空。带结果缓存。"""
+    key = (rec.name, rec.kind, rec.source_code)
+    cached = _COMPILE_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         cls = compile_user_strategy(rec.name, rec.source_code, rec.kind)
-        return _params(cls), ""
+        result: tuple[list[dict[str, Any]], str] = _params(cls), ""
     except StrategyError as e:
-        return [], str(e)
+        result = [], str(e)
+    _COMPILE_CACHE[key] = result
+    return result
 
 
 def _user_info(rec: UserStrategyRecord) -> StrategyInfo:
