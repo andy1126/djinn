@@ -81,6 +81,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if recovered:
         logger.info("启动恢复 %d 个孤儿任务", recovered)
     _auto_purge_old_jobs(registry)
+    # 预热用户策略编译(初始化 pynescript/antlr),首次请求策略列表不再卡 2.3s
+    try:
+        import time as _t
+
+        from djinn.api.routers.strategies import warm_up_user_strategies
+
+        _t0 = _t.perf_counter()
+        warm_up_user_strategies()
+        logger.info("用户策略编译预热完成(%.2fs)", _t.perf_counter() - _t0)
+    except Exception as e:  # 预热失败不影响启动
+        logger.warning("用户策略预热失败(首次请求将现场编译): %s", e)
     yield
 
 

@@ -55,6 +55,23 @@ def _builtin_info(name: str) -> StrategyInfo:
 _COMPILE_CACHE: dict[tuple[str, str, str], tuple[list[dict[str, Any]], str]] = {}
 
 
+def warm_up_user_strategies() -> None:
+    """启动预热:编译全部用户策略,初始化 pynescript/antlr。
+
+    策略列表首次加载慢的根因是 Pine 策略的 pynescript 转译(antlr 解析器初始化)
+    首期 ~2.3s。启动时提前编译一遍,把成本挪到后端启动,首次请求即缓存命中。
+    编译失败只填充错误缓存(``_compiled`` 已捕获 StrategyError),不影响启动。
+    """
+    from djinn.strategy.store import StrategyStore
+
+    try:
+        recs = StrategyStore().list_strategies()
+    except Exception:
+        return
+    for rec in recs:
+        _compiled(rec)
+
+
 def _compiled(rec: UserStrategyRecord) -> tuple[list[dict[str, Any]], str]:
     """编译用户策略,返回 (params, error);失败时 params 为空。带结果缓存。"""
     key = (rec.name, rec.kind, rec.source_code)
