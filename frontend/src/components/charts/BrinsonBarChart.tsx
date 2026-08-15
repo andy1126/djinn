@@ -9,8 +9,8 @@ interface Props {
 /** Brinson 三效应按行业可视化(配置 / 选股 / 交互堆叠柱)。 */
 export default function BrinsonBarChart({ brinson, height = 340 }: Props) {
   const ind = brinson.allocation.index
-  const series = ['allocation', 'selection', 'interaction'].map((key, _idx) => {
-    const s = (brinson as any)[key]
+  const series = ['allocation', 'selection', 'interaction'].map((key) => {
+    const s = (brinson as unknown as Record<string, { values: number[] }>)[key]
     return {
       name: key === 'allocation' ? '配置' : key === 'selection' ? '选股' : '交互',
       type: 'bar',

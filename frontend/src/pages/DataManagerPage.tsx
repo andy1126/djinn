@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
-import { fetchData, listCache, clearCache, getCacheContent } from '@/api/client'
+import { errDetail, fetchData, listCache, clearCache, getCacheContent } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import QueryErrorAlert from '@/components/QueryErrorAlert'
 import type { CacheEntry, Profile } from '@/types'
@@ -23,7 +23,6 @@ const DTYPE_LABEL: Record<string, string> = {
 export default function DataManagerPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm()
-  const [symbols, setSymbols] = useState<string[]>(['NVDA'])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
 
   const { data: cache, isError: cacheError, refetch: refetchCache } = useQuery({
@@ -54,7 +53,7 @@ export default function DataManagerPage() {
       message.success('拉取成功')
       qc.invalidateQueries({ queryKey: ['cache'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || String(e)),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const clearMut = useMutation({
@@ -65,7 +64,7 @@ export default function DataManagerPage() {
     },
   })
 
-  const onSubmit = (v: any) => {
+  const onSubmit = (v: { symbols: string; market: string; range: [dayjs.Dayjs, dayjs.Dayjs]; adjust: string }) => {
     const [start, end] = v.range || []
     fetchMut.mutate({
       symbols: v.symbols.split(',').map((s: string) => s.trim()).filter(Boolean),

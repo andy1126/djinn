@@ -11,10 +11,12 @@ import {
   listFactorMatrices,
   getFactorMatrixJob,
   getFactorMatrixReport,
+  errDetail,
 } from '@/api/client'
-import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, IndexInfo, JobStatus, ParamSchema } from '@/types'
+import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, IndexInfo, JobStatus } from '@/types'
 import MatrixHeatmap from '@/components/charts/MatrixHeatmap'
 import JobHistoryTable from '@/components/JobHistoryTable'
+import ParamField from '@/components/ParamFields'
 import { CORR_MATRIX_TIP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
@@ -29,52 +31,6 @@ interface PointDraft extends FactorMatrixPoint {
   /** 临时参数(展开行)。 */
   params: Record<string, number | string | boolean | null>
   uid: number
-}
-
-function paramWidget(p: ParamSchema, value: any, onSet: (v: any) => void) {
-  const label = <span><b>{p.name}</b> <Typography.Text type="secondary">{p.description || ''}</Typography.Text></span>
-  if (p.choices && p.choices.length > 0) {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select
-          value={value ?? p.default}
-          onChange={onSet}
-          options={p.choices.map((c) => ({ label: String(c), value: c }))}
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
-    )
-  }
-  if (p.type === 'bool' || p.type === 'boolean') {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select
-          value={value ?? p.default}
-          onChange={onSet}
-          options={[{ label: 'true', value: true }, { label: 'false', value: false }]}
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
-    )
-  }
-  if (p.type === 'str' || p.type === 'string' || p.type === 'NoneType') {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select placeholder="因子" style={{ width: '100%' }} />
-      </Form.Item>
-    )
-  }
-  return (
-    <Form.Item key={p.name} label={label}>
-      <InputNumber
-        value={value != null ? Number(value) : Number(p.default)}
-        onChange={(v) => onSet(v ?? 0)}
-        min={p.min != null ? Number(p.min) : undefined}
-        max={p.max != null ? Number(p.max) : undefined}
-        style={{ width: '100%' }}
-      />
-    </Form.Item>
-  )
 }
 
 // F10:随机种子避免 HMR 重载后计数器归零与既有 state 的 uid 冲突
@@ -158,7 +114,7 @@ export default function FactorMatrixPage() {
       qc.invalidateQueries({ queryKey: ['factor-matrix-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['factor-matrix-jobs'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const addFactor = (name?: string) => {
@@ -206,7 +162,7 @@ export default function FactorMatrixPage() {
   }
 
   // IC 摘要表(展平 period × factor)
-  const icRows: any[] = []
+  const icRows: Record<string, unknown>[] = []
   if (report) {
     Object.entries(report.ic_summary).forEach(([period, byFactor]) => {
       Object.entries(byFactor).forEach(([fname, s]) => {
@@ -252,11 +208,16 @@ export default function FactorMatrixPage() {
                 </Space>
                 {info && info.params.length > 0 && (
                   <Card size="small" style={{ marginTop: 8 }} title={`${d.factor} 参数`}>
-                    {info.params.map((p) =>
-                      paramWidget(p, d.params[p.name], (val) =>
-                        update(d.uid, { params: { ...d.params, [p.name]: val } }),
-                      ),
-                    )}
+                    {info.params.map((p) => (
+                      <ParamField
+                        key={p.name}
+                        p={p}
+                        value={d.params[p.name]}
+                        onSet={(val) =>
+                          update(d.uid, { params: { ...d.params, [p.name]: val as number | string | boolean | null } })
+                        }
+                      />
+                    ))}
                   </Card>
                 )}
               </Card>
@@ -334,6 +295,7 @@ export default function FactorMatrixPage() {
               size="small"
               dataSource={icRows}
               pagination={{ pageSize: 20 }}
+              scroll={{ x: true }}
               columns={[
                 { title: '期', dataIndex: 'period', key: 'period', width: 80 },
                 { title: '因子', dataIndex: 'factor', key: 'factor' },

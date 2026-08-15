@@ -1,4 +1,4 @@
-import { Form, InputNumber, Select, Input, Slider, Tooltip } from 'antd'
+import { Form, InputNumber, Select, Input, Slider } from 'antd'
 import type { ParamSchema } from '@/types'
 
 interface Props {
@@ -8,16 +8,15 @@ interface Props {
 }
 
 export default function StrategyParamForm({ schema, value, onChange }: Props) {
-  const update = (name: string, v: any) => onChange({ ...value, [name]: v })
+  const update = (name: string, v: number | string | boolean) => onChange({ ...value, [name]: v })
 
   const renderField = (p: ParamSchema) => {
-    const label = p.description ? <Tooltip title={p.description}>{p.name}</Tooltip> : p.name
     const v = value[p.name] ?? p.default
 
     if (p.choices && p.choices.length > 0) {
       return (
         <Select
-          value={v as any}
+          value={v as string | number | boolean}
           onChange={(val) => update(p.name, val)}
           options={p.choices.map((c) => ({ label: String(c), value: c }))}
           style={{ width: '100%' }}
@@ -27,7 +26,7 @@ export default function StrategyParamForm({ schema, value, onChange }: Props) {
     if (p.type === 'bool' || p.type === 'boolean') {
       return (
         <Select
-          value={v as any}
+          value={v as string | number | boolean}
           onChange={(val) => update(p.name, val)}
           options={[{ label: 'true', value: true }, { label: 'false', value: false }]}
           style={{ width: '100%' }}

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Button, Card, Checkbox, Form, Input, InputNumber, message, Progress, Select, Segmented, Space, Table, Tag, Typography,
+  Button, Card, Checkbox, Form, Input, message, Progress, Select, Segmented, Space, Table, Tag, Typography,
 } from 'antd'
-import { createSweep, listSweeps } from '@/api/client'
+import { createSweep, errDetail, listSweeps } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import JobHistoryTable from '@/components/JobHistoryTable'
 import type { JobStatus, SweepResultRow } from '@/types'
@@ -83,7 +83,7 @@ export default function SweepPage() {
       message.success(`扫描任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['sweeps'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const addDraft = () =>
@@ -114,8 +114,8 @@ export default function SweepPage() {
     return grid
   }
 
-  const onSubmit = (v: any) => {
-    const grid = buildGrid(v.gridText)
+  const onSubmit = (v: { gridText?: string; target: string; parallel: boolean }) => {
+    const grid = buildGrid(v.gridText ?? '')
     if (Object.keys(grid).length === 0) {
       message.error('请至少配置一个扫轴')
       return
@@ -129,41 +129,41 @@ export default function SweepPage() {
   const resultRows: SweepResultRow[] = (() => {
     const r = running
     if (!r || r.status !== 'done') return []
-    const results = (r.result as any)?.results
+    const results = (r.result as { results?: unknown } | undefined)?.results
     return Array.isArray(results) ? (results as SweepResultRow[]) : []
   })()
-  const target = (running?.result as any)?.target || 'sharpe'
+  const target = ((running?.result as { target?: string } | undefined)?.target) || 'sharpe'
 
   const summaryCols = [
-    { title: '组合', key: 'params', render: (_: any, r: SweepResultRow) => (
+    { title: '组合', key: 'params', render: (_: unknown, r: SweepResultRow) => (
       <Space direction="vertical" size={0}>
         {Object.entries(r.params).map(([k, v]) => (
           <Typography.Text key={k} code>{k}={String(v)}</Typography.Text>
         ))}
       </Space>
     )},
-    { title: '权重法', key: 'alloc', render: (_: any, r: SweepResultRow) =>
+    { title: '权重法', key: 'alloc', render: (_: unknown, r: SweepResultRow) =>
       r.config_summary['portfolio.allocation'] },
-    { title: 'n_stocks', key: 'nstocks', render: (_: any, r: SweepResultRow) =>
+    { title: 'n_stocks', key: 'nstocks', render: (_: unknown, r: SweepResultRow) =>
       r.config_summary['strategy.n_stocks'] ?? '—' },
-    { title: 'index', key: 'idx', render: (_: any, r: SweepResultRow) =>
+    { title: 'index', key: 'idx', render: (_: unknown, r: SweepResultRow) =>
       r.config_summary['universe.index'] ?? '—' },
-    { title: '标的数', key: 'nsym', render: (_: any, r: SweepResultRow) =>
+    { title: '标的数', key: 'nsym', render: (_: unknown, r: SweepResultRow) =>
       r.config_summary.n_symbols },
-    { title: 'target', key: 'target', render: (_: any, r: SweepResultRow) =>
-      <Tag color="blue">{Number((r as any)[target] ?? 0).toFixed(3)}</Tag> },
-    { title: 'sharpe', key: 'sharpe', render: (_: any, r: SweepResultRow) =>
-      Number((r as any).sharpe ?? 0).toFixed(3) },
-    { title: 'sortino', key: 'sortino', render: (_: any, r: SweepResultRow) =>
-      Number((r as any).sortino ?? 0).toFixed(3) },
-    { title: 'calmar', key: 'calmar', render: (_: any, r: SweepResultRow) =>
-      Number((r as any).calmar ?? 0).toFixed(3) },
-    { title: '总收益', key: 'ret', render: (_: any, r: SweepResultRow) =>
-      `${(Number((r as any).total_return ?? 0) * 100).toFixed(2)}%` },
-    { title: '最大回撤', key: 'mdd', render: (_: any, r: SweepResultRow) =>
-      `${(Number((r as any).max_drawdown ?? 0) * 100).toFixed(2)}%` },
-    { title: '交易数', key: 'trades', render: (_: any, r: SweepResultRow) =>
-      (r as any).n_trades ?? '—' },
+    { title: 'target', key: 'target', render: (_: unknown, r: SweepResultRow) =>
+      <Tag color="blue">{Number(r[target] ?? 0).toFixed(3)}</Tag> },
+    { title: 'sharpe', key: 'sharpe', render: (_: unknown, r: SweepResultRow) =>
+      Number(r.sharpe ?? 0).toFixed(3) },
+    { title: 'sortino', key: 'sortino', render: (_: unknown, r: SweepResultRow) =>
+      Number(r.sortino ?? 0).toFixed(3) },
+    { title: 'calmar', key: 'calmar', render: (_: unknown, r: SweepResultRow) =>
+      Number(r.calmar ?? 0).toFixed(3) },
+    { title: '总收益', key: 'ret', render: (_: unknown, r: SweepResultRow) =>
+      `${(Number(r.total_return ?? 0) * 100).toFixed(2)}%` },
+    { title: '最大回撤', key: 'mdd', render: (_: unknown, r: SweepResultRow) =>
+      `${(Number(r.max_drawdown ?? 0) * 100).toFixed(2)}%` },
+    { title: '交易数', key: 'trades', render: (_: unknown, r: SweepResultRow) =>
+      r.n_trades ?? '—' },
   ]
 
   return (

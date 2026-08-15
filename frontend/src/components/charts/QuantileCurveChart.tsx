@@ -8,7 +8,7 @@ interface Props {
 
 /** 分层累计收益曲线(评估因子单调性:顶组 vs 底组是否持续分化)。 */
 export default function QuantileCurveChart({ quantileReturns, height = 340 }: Props) {
-  const series = quantileReturns.columns.map((c, idx) => ({
+  const series = quantileReturns.columns.map((_c, idx) => ({
     name: `Q${idx + 1}`,
     type: 'line',
     data: quantileReturns.data.map((row, i) => [

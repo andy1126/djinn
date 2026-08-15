@@ -148,6 +148,7 @@ export default function DashboardPage() {
           columns={columns}
           dataSource={jobs}
           size="middle"
+          scroll={{ x: true }}
           pagination={{ pageSize: 10, showSizeChanger: false }}
           rowSelection={{
             selectedRowKeys: compareJobIds,

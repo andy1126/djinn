@@ -62,6 +62,12 @@ http.interceptors.response.use(
   },
 )
 
+/** 从错误对象提取友好文案(拦截器已挂 friendlyMessage,兜底 message)。 */
+export const errDetail = (e: unknown): string =>
+  (e as { friendlyMessage?: string })?.friendlyMessage
+  ?? (e as { message?: string })?.message
+  ?? '请求失败'
+
 // ── 策略 ─────────────────────────────────────────────
 export const listStrategies = async (): Promise<StrategyListResponse> =>
   (await http.get('/strategies')).data

@@ -31,8 +31,8 @@ export default function MatrixHeatmap({
   const cols = matrix.columns
   const data: [number, number, number][] = []
   let max = 0
-  rows.forEach((r, ri) => {
-    cols.forEach((c, ci) => {
+  rows.forEach((_r, ri) => {
+    cols.forEach((_c, ci) => {
       const v = matrix.data[ri]?.[ci]
       const n = typeof v === 'number' ? v : 0
       if (Math.abs(n) > max) max = Math.abs(n)
@@ -47,7 +47,7 @@ export default function MatrixHeatmap({
   const option = {
     tooltip: {
       position: 'top',
-      formatter: (p: any) => {
+      formatter: (p: { value: number[] }) => {
         const v = p.value[2]
         return `${rows[p.value[1]]} × ${cols[p.value[0]]}: ${fmt(v)}`
       },
@@ -81,7 +81,7 @@ export default function MatrixHeatmap({
         data,
         label: {
           show: true,
-          formatter: (p: any) => fmt(p.value[2]),
+          formatter: (p: { value: number[] }) => fmt(p.value[2]),
         },
         emphasis: {
           itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' },

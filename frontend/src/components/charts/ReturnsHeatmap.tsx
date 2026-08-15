@@ -15,8 +15,8 @@ export default function ReturnsHeatmap({ monthly, height = 320 }: Props) {
   const months = monthly.columns
   const data: [number, number, number][] = []
   let min = 0, max = 0
-  years.forEach((y, yi) => {
-    months.forEach((m, mi) => {
+  years.forEach((_y, yi) => {
+    months.forEach((_m, mi) => {
       const r = monthly.data[yi]?.[mi]
       const v = typeof r === 'number' ? r : 0
       if (v < min) min = v
@@ -50,7 +50,7 @@ export default function ReturnsHeatmap({ monthly, height = 320 }: Props) {
         data,
         label: {
           show: true,
-          formatter: (p: any) => (p.value[2] * 100).toFixed(1) + '%',
+          formatter: (p: { value: number[] }) => (p.value[2] * 100).toFixed(1) + '%',
         },
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } },
       },

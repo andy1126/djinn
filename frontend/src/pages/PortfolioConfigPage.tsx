@@ -45,16 +45,16 @@ export default function PortfolioConfigPage() {
         </Typography.Paragraph>
         {symbols.map((s, i) => (
           <Row key={i} gutter={8} style={{ marginBottom: 8 }} align="middle">
-            <Col span={10}>
+            <Col xs={24} md={10}>
               <Input placeholder="标的代码" value={s.sym} onChange={(e) => updateSymbol(i, 'sym', e.target.value)} />
             </Col>
-            <Col span={10}>
+            <Col xs={24} md={10}>
               <Slider min={0} max={1} step={0.01} value={s.weight}
                 onChange={(v) => updateSymbol(i, 'weight', v ?? 0)}
                 tooltip={{ formatter: (v) => `${((v ?? 0) * 100).toFixed(0)}%` }}
               />
             </Col>
-            <Col span={4}>
+            <Col xs={12} sm={12} lg={4}>
               <Button danger icon={<MinusCircleOutlined />} onClick={() => removeSymbol(i)} disabled={symbols.length <= 1} />
             </Col>
           </Row>
@@ -102,20 +102,20 @@ export default function PortfolioConfigPage() {
       <Card title="资金与费用">
         <Form layout="vertical">
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} sm={12} lg={8}>
               <Form.Item label="初始资金">
                 <InputNumber min={1} value={config.account.initial_cash} style={{ width: '100%' }}
                   onChange={(v) => updateConfig('account', { ...config.account, initial_cash: v ?? 100000 })} />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} lg={8}>
               <Form.Item label="币种">
                 <Select value={config.account.currency}
                   onChange={(v) => updateConfig('account', { ...config.account, currency: v })}
                   options={[{ label: 'USD', value: 'USD' }, { label: 'CNY', value: 'CNY' }, { label: 'HKD', value: 'HKD' }]} />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} lg={8}>
               <Form.Item label="佣金模型">
                 <Select value={config.costs.commission.type}
                   onChange={(v) => updateConfig('costs', { ...config.costs, commission: { ...config.costs.commission, type: v } })}

@@ -69,7 +69,7 @@ export default function ReportCompare({ jobIds }: Props) {
     let bestId = ''
     let bestVal = -Infinity
     reports?.forEach((r) => {
-      const v = (r.report.metrics as any)[m] as number
+      const v = (r.report.metrics as Record<string, number>)[m]
       if (v != null && !Number.isNaN(v) && v > bestVal) { bestVal = v; bestId = r.jobId }
     })
     if (bestId) bestByMetric[m] = bestId
@@ -90,9 +90,9 @@ export default function ReportCompare({ jobIds }: Props) {
   ]
 
   const dataSource = metricRows.map((m) => {
-    const row: any = { key: m, metric: m }
+    const row: Record<string, string> = { key: m, metric: m }
     reports?.forEach((r) => {
-      const v = (r.report.metrics as any)[m] as number
+      const v = (r.report.metrics as Record<string, number>)[m]
       row[r.jobId] = m.includes('return') || m === 'max_drawdown' || m === 'win_rate' || m === 'turnover'
         ? fmtPct(v) : m === 'n_trades' ? String(v) : fmtNum(v)
     })

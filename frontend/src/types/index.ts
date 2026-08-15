@@ -250,6 +250,12 @@ export interface SweepResultRow {
     'strategy.rebalance_freq': number | null
     'strategy.params': Record<string, number | string | boolean | null>
   }
+  sharpe?: number
+  sortino?: number
+  calmar?: number
+  total_return?: number
+  max_drawdown?: number
+  n_trades?: number
   [key: string]: unknown
 }
 

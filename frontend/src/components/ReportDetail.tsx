@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Space, Spin, Tabs, Typography, message } from 'antd'
-import { getBacktestReport, exportBacktest } from '@/api/client'
+import { getBacktestReport, exportBacktest, errDetail } from '@/api/client'
 import MetricsCards from '@/components/MetricsCards'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DrawdownChart from '@/components/charts/DrawdownChart'
@@ -31,19 +31,19 @@ export default function ReportDetail({ jobId }: Props) {
 
   const onExport = async (fmt: 'csv' | 'excel') => {
     try {
-      const data: any = await exportBacktest(jobId, fmt)
+      const data = await exportBacktest(jobId, fmt)
       if (fmt === 'csv') {
         message.success('CSV 已生成')
       } else {
-        const url = URL.createObjectURL(data)
+        const url = URL.createObjectURL(data as Blob)
         const a = document.createElement('a')
         a.href = url
         a.download = `${jobId}.xlsx`
         a.click()
         URL.revokeObjectURL(url)
       }
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '导出失败')
+    } catch (e) {
+      message.error(errDetail(e))
     }
   }
 
@@ -56,7 +56,7 @@ export default function ReportDetail({ jobId }: Props) {
   }
 
   if (error) {
-    return <Alert type="error" message="加载失败" description={(error as any)?.message} showIcon />
+    return <Alert type="error" message="加载失败" description={(error as Error)?.message} showIcon />
   }
 
   if (!report) return null

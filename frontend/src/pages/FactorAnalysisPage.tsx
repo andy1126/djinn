@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Button, Card, Collapse, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Tooltip, Typography,
+  Alert, Button, Card, Collapse, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Tag, Tooltip, Typography,
 } from 'antd'
 import { QuestionCircleOutlined } from '@ant-design/icons'
 import {
@@ -11,11 +11,13 @@ import {
   listFactorAnalyses,
   getFactorAnalysisJob,
   getFactorAnalysisReport,
+  errDetail,
 } from '@/api/client'
-import type { FactorInfo, FactorReport, IndexInfo, JobStatus, ParamSchema } from '@/types'
+import type { FactorInfo, FactorReport, IndexInfo, JobStatus } from '@/types'
 import QuantileCurveChart from '@/components/charts/QuantileCurveChart'
 import ICBarChart from '@/components/charts/ICBarChart'
 import JobHistoryTable from '@/components/JobHistoryTable'
+import ParamField from '@/components/ParamFields'
 import { IC_RANGE_HELP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
@@ -26,52 +28,6 @@ interface FormValues {
   range: [Date, Date]
   ic_method: string
   n_quantiles: number
-}
-
-function paramWidget(p: ParamSchema, value: any, onSet: (v: any) => void) {
-  const label = <span><b>{p.name}</b> <Typography.Text type="secondary">{p.description || ''}</Typography.Text></span>
-  if (p.choices && p.choices.length > 0) {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select
-          value={value ?? p.default}
-          onChange={onSet}
-          options={p.choices.map((c) => ({ label: String(c), value: c }))}
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
-    )
-  }
-  if (p.type === 'bool' || p.type === 'boolean') {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select
-          value={value ?? p.default}
-          onChange={onSet}
-          options={[{ label: 'true', value: true }, { label: 'false', value: false }]}
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
-    )
-  }
-  if (p.type === 'str' || p.type === 'string' || p.type === 'NoneType') {
-    return (
-      <Form.Item key={p.name} label={label}>
-        <Select placeholder="因子" style={{ width: '100%' }} />
-      </Form.Item>
-    )
-  }
-  return (
-    <Form.Item key={p.name} label={label}>
-      <InputNumber
-        value={value != null ? Number(value) : Number(p.default)}
-        onChange={(v) => onSet(v ?? 0)}
-        min={p.min != null ? Number(p.min) : undefined}
-        max={p.max != null ? Number(p.max) : undefined}
-        style={{ width: '100%' }}
-      />
-    </Form.Item>
-  )
 }
 
 function MetricTag({ label, value, tip }: { label: string; value: string; tip: string }) {
@@ -92,7 +48,7 @@ export default function FactorAnalysisPage() {
   const [form] = Form.useForm<FormValues>()
   const [jobId, setJobId] = useState<string | null>(null)
   const [selected, setSelected] = useState<FactorInfo | null>(null)
-  const [params, setParams] = useState<Record<string, any>>({})
+  const [params, setParams] = useState<Record<string, number | string | boolean | null>>({})
 
   const { data: factorsResp, isLoading: factorsLoading } = useQuery({
     queryKey: ['factors'],
@@ -154,7 +110,7 @@ export default function FactorAnalysisPage() {
       qc.invalidateQueries({ queryKey: ['factor-analysis-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['factor-analysis-jobs'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const onSubmit = (v: FormValues) => {
@@ -197,9 +153,14 @@ export default function FactorAnalysisPage() {
 
           {selected && selected.params.length > 0 && (
             <Card size="small" title={`${selected.name} 参数`}>
-              {selected.params.map((p) =>
-                paramWidget(p, params[p.name], (val) => setParams((prev) => ({ ...prev, [p.name]: val }))),
-              )}
+              {selected.params.map((p) => (
+                <ParamField
+                  key={p.name}
+                  p={p}
+                  value={params[p.name]}
+                  onSet={(val) => setParams((prev) => ({ ...prev, [p.name]: val as number | string | boolean | null }))}
+                />
+              ))}
             </Card>
           )}
 

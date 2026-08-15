@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { createProfile, deleteProfile, listProfiles, updateProfile } from '@/api/client'
+import { createProfile, deleteProfile, errDetail, listProfiles, updateProfile } from '@/api/client'
 import type { Market, Profile } from '@/types'
 
 interface FormValues {
@@ -32,17 +32,17 @@ export default function ProfileManager() {
   const createMut = useMutation({
     mutationFn: createProfile,
     onSuccess: () => { message.success('已创建'); setOpen(false); form.resetFields(); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const updateMut = useMutation({
     mutationFn: ({ id, req }: { id: string; req: Parameters<typeof updateProfile>[1] }) => updateProfile(id, req),
     onSuccess: () => { message.success('已更新'); setOpen(false); form.resetFields(); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '更新失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const deleteMut = useMutation({
     mutationFn: deleteProfile,
     onSuccess: () => { message.success('已删除'); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '删除失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const openCreate = () => {

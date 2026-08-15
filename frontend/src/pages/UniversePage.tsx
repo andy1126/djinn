@@ -5,7 +5,7 @@ import {
   AutoComplete, Button, Card, Col, Descriptions, Dropdown, Empty, Input, Pagination, Row, Segmented, Select, Space, Spin, Tag, Typography, message,
 } from 'antd'
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
-import { getIndexComponents, getStockDetail, listIndexes, listProfiles, searchStocks, updateProfile } from '@/api/client'
+import { errDetail, getIndexComponents, getStockDetail, listIndexes, listProfiles, searchStocks, updateProfile } from '@/api/client'
 import type { IndexInfo, Profile, StockDetail as StockDetailT, SymbolSearchResult } from '@/types'
 import ProfileManager from '@/components/ProfileManager'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -166,7 +166,7 @@ function DetailCard({ detail, profiles, onAddToProfile }: {
       }
     >
       <Row gutter={16}>
-        <Col span={8}>
+        <Col xs={24} sm={12} lg={8}>
           <Descriptions size="small" column={1} title="估值">
             <Descriptions.Item label="价格">{fmt(detail.price)}</Descriptions.Item>
             <Descriptions.Item label="PE">{fmt(detail.pe)}</Descriptions.Item>
@@ -176,7 +176,7 @@ function DetailCard({ detail, profiles, onAddToProfile }: {
             <Descriptions.Item label="流通市值">{cap(detail.float_cap)}</Descriptions.Item>
           </Descriptions>
         </Col>
-        <Col span={8}>
+        <Col xs={24} sm={12} lg={8}>
           <Descriptions size="small" column={1} title="财务">
             <Descriptions.Item label="ROE">{fmt(detail.roe, '%')}</Descriptions.Item>
             <Descriptions.Item label="毛利率">{fmt(detail.gross_margin, '%')}</Descriptions.Item>
@@ -246,7 +246,7 @@ export default function UniversePage() {
       message.success('已加入 Profile')
       qc.invalidateQueries({ queryKey: ['profiles'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '加入失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const onAddToProfile = (profileId: string, symbol: string) => {
     const p = profileList.find((x) => x.profile_id === profileId)
@@ -292,7 +292,7 @@ export default function UniversePage() {
       ].slice(0, HISTORY_MAX)
       setHistory(next)
       saveHistory(next)
-    } catch (e: any) {
+    } catch {
       setDetail(null)
     } finally {
       setDetailLoading(false)

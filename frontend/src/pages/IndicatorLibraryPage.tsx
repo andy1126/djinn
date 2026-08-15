@@ -9,6 +9,7 @@ import { PlusOutlined } from '@ant-design/icons'
 import {
   createUserIndicator, deleteUserIndicator, listIndicators, listUserIndicators,
   updateUserIndicator, validateUserIndicator,
+  errDetail,
 } from '@/api/client'
 import type { IndicatorInfo, UserIndicator, UserIndicatorValidateResponse } from '@/types'
 import QueryErrorAlert from '@/components/QueryErrorAlert'
@@ -38,22 +39,22 @@ export default function IndicatorLibraryPage() {
   const createMut = useMutation({
     mutationFn: createUserIndicator,
     onSuccess: (r) => { message.success('已保存'); setEditingId(r.indicator_id); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '保存失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const updateMut = useMutation({
     mutationFn: ({ id, req }: { id: string; req: Parameters<typeof updateUserIndicator>[1] }) => updateUserIndicator(id, req),
     onSuccess: () => { message.success('已更新'); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '更新失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const deleteMut = useMutation({
     mutationFn: deleteUserIndicator,
     onSuccess: () => { message.success('已删除'); if (editingId) reset(); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '删除失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const validateMut = useMutation({
     mutationFn: validateUserIndicator,
     onSuccess: (r) => setValidate(r),
-    onError: (e: any) => message.error(e?.response?.data?.detail || '验证失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const reset = () => {
@@ -136,6 +137,7 @@ export default function IndicatorLibraryPage() {
           size="small"
           loading={isLoading}
           pagination={false}
+          scroll={{ x: true }}
           tableLayout="fixed"
         />
       </Card>
@@ -157,14 +159,14 @@ export default function IndicatorLibraryPage() {
           locale={{ emptyText: '暂无自定义指标' }}
         />
         <Row gutter={16} style={{ marginTop: 16 }}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <Row gutter={8}>
-                <Col span={12}>
+                <Col xs={24} md={12}>
                   <Typography.Text>函数名</Typography.Text>
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 my_roc" />
                 </Col>
-                <Col span={12}>
+                <Col xs={24} md={12}>
                   <Typography.Text>说明(可选)</Typography.Text>
                   <Input value={description} onChange={(e) => setDescription(e.target.value)} />
                 </Col>
@@ -178,7 +180,7 @@ export default function IndicatorLibraryPage() {
               </Space>
             </Space>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Card size="small" title="验证结果">
               {!validate && <Typography.Text type="secondary">点「验证」编译代码并预览签名。</Typography.Text>}
               {validate && !validate.valid && <Alert type="error" showIcon message={validate.error} style={{ whiteSpace: 'pre-wrap' }} />}

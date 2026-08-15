@@ -3,13 +3,23 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
-import { createBacktest, listStrategies } from '@/api/client'
+import { createBacktest, errDetail, listStrategies } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import StrategyParamForm from '@/components/StrategyParamForm'
 import { useJobProgress } from '@/hooks/useJobProgress'
 import { useConfigStore } from '@/store/configStore'
 import { useNotifyStore } from '@/store/notifyStore'
 import type { BacktestConfig, Profile, StrategyInfo } from '@/types'
+
+/** 回测创建表单值(F12:antd Form onFinish 的 v 不再是 any)。 */
+interface BacktestFormValues {
+  range: [dayjs.Dayjs, dayjs.Dayjs]
+  symbols: string
+  market: string
+  initialCash: number
+  currency?: string
+  adjust: string
+}
 
 const ALLOC_LABEL: Record<string, string> = {
   equal: '等权', market_cap: '市值加权', custom: '自定义', score: '打分',
@@ -68,7 +78,7 @@ export default function BacktestRunPage() {
     }
   }, [progress?.status])
 
-  const syncConfig = (v: any): BacktestConfig => {
+  const syncConfig = (v: BacktestFormValues): BacktestConfig => {
     const [start, end] = v.range || []
     const next = {
       ...config,
@@ -85,20 +95,20 @@ export default function BacktestRunPage() {
     return next
   }
 
-  const onSubmit = async (v: any) => {
+  const onSubmit = async (v: BacktestFormValues) => {
     const cfg = syncConfig(v)
     try {
       const resp = await createBacktest({ config: cfg })
       setJobId(resp.job_id)
       // 进度订阅交给 useJobProgress(jobId) 处理(含卸载清理与断连降级)
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '创建失败')
+    } catch (e) {
+      message.error(errDetail(e))
     }
   }
 
   return (
     <Row gutter={16}>
-      <Col span={12}>
+      <Col xs={24} md={12}>
         <Card title="回测配置">
           <Form
             form={form}
@@ -125,7 +135,7 @@ export default function BacktestRunPage() {
               />
             </Form.Item>
             <Row gutter={8}>
-              <Col span={8}>
+              <Col xs={24} sm={12} lg={8}>
                 <Form.Item name="market" label="市场">
                   <Select options={[
                     { label: '美股', value: 'US' },
@@ -134,19 +144,19 @@ export default function BacktestRunPage() {
                   ]} />
                 </Form.Item>
               </Col>
-              <Col span={16}>
+              <Col xs={24} md={16}>
                 <Form.Item name="range" label="区间" rules={[{ required: true }]}>
                   <RangePicker style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
             </Row>
             <Row gutter={8}>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Form.Item name="initialCash" label="初始资金">
                   <InputNumber min={1} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Form.Item name="currency" label="币种">
                   <Input />
                 </Form.Item>
@@ -203,7 +213,7 @@ export default function BacktestRunPage() {
         </Card>
       </Col>
 
-      <Col span={12}>
+      <Col xs={24} md={12}>
         <Card title="运行状态">
           {!jobId && <Alert message='点击"开始回测"提交任务' type="info" showIcon />}
           {jobId && progress && (

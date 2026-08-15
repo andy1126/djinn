@@ -15,7 +15,7 @@ export default function TradesTable({ trades }: Props) {
     title: k,
     dataIndex: k,
     key: k,
-    render: (v: any) => {
+    render: (v: unknown) => {
       if (typeof v === 'number') return v.toFixed(4).replace(/\.?0+$/, '') || v
       if (k === 'side' || k.toLowerCase().includes('side')) {
         const isBuy = String(v).toLowerCase().includes('buy')

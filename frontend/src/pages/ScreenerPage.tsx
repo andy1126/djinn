@@ -12,10 +12,11 @@ import {
   listScreenJobs,
   createScreen,
   getScreenJob,
+  errDetail,
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import JobHistoryTable from '@/components/JobHistoryTable'
-import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket } from '@/types'
+import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket, ScreenOp, ScreenResultRow } from '@/types'
 
 const OPS = ['gt', 'lt', 'ge', 'le', 'eq', 'between', 'in']
 
@@ -107,16 +108,16 @@ export default function ScreenerPage() {
     queryFn: () => getScreenJob(jobId!),
     enabled: !!jobId,
     refetchInterval: (q) => {
-      const s = (q.state.data as any)?.status
+      const s = q.state.data?.status
       return s === 'pending' || s === 'running' ? 2000 : false
     },
   })
-  const job = poll.data as any
+  const job = poll.data
   const navigate = useNavigate()
   const config = useConfigStore((s) => s.config)
   const updateConfig = useConfigStore((s) => s.updateConfig)
 
-  const rows: Record<string, any>[] = job?.result?.results ?? []
+  const rows: ScreenResultRow[] = (job?.result?.results as ScreenResultRow[] | undefined) ?? []
   const fieldLabel = useMemo(() => {
     const m: Record<string, string> = { score: '综合得分' }
     for (const f of screenFields) m[f.name] = f.label
@@ -131,8 +132,8 @@ export default function ScreenerPage() {
         title: fieldLabel[k] ?? k,
         dataIndex: k,
         key: k,
-        render: (v: any) => (typeof v === 'number' ? formatCompact(v) : (v ?? '—')),
-        sorter: (a: any, b: any) => (a[k] ?? -Infinity) - (b[k] ?? -Infinity),
+        render: (v: unknown) => (typeof v === 'number' ? formatCompact(v) : (v ?? '—')),
+        sorter: (a: ScreenResultRow, b: ScreenResultRow) => ((a[k] as number) ?? -Infinity) - ((b[k] as number) ?? -Infinity),
       })),
     ]
   }, [rows, fieldLabel])
@@ -173,11 +174,11 @@ export default function ScreenerPage() {
       qc.invalidateQueries({ queryKey: ['screen-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['screen-jobs'] })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
-  const onSubmit = (v: any) => {
-    const when = v.when as Date | undefined
+  const onSubmit = (v: { index?: string; when?: Date }) => {
+    const when = v.when
     const idx = indexes.find((i) => i.key === v.index)
     mut.mutate({
       conditions: conditions
@@ -192,7 +193,7 @@ export default function ScreenerPage() {
                 : Number.isNaN(num)
                   ? c.value.trim()
                   : num
-          return { field: c.field.trim(), op: c.op as any, value }
+          return { field: c.field.trim(), op: c.op as ScreenOp, value }
         }),
       scores: scores.filter((s) => s.factor && s.weight),
       top_n: scores.length ? topN : null,
@@ -280,7 +281,7 @@ export default function ScreenerPage() {
                 />
                 <Select
                   value={s.direction}
-                  onChange={(v: any) => setScores((arr) => arr.map((x, j) => (j === i ? { ...x, direction: v } : x)))}
+                  onChange={(v) => setScores((arr) => arr.map((x, j) => (j === i ? { ...x, direction: v as 1 | -1 } : x)))}
                   options={[{ value: 1, label: '看多' }, { value: -1, label: '看空' }]}
                   style={{ width: 90 }}
                 />
@@ -288,7 +289,7 @@ export default function ScreenerPage() {
               </Space>
             ))}
             <Space>
-              <Button size="small" onClick={() => setScores((arr) => [...arr, { factor: '', weight: 1, direction: 1 as 1 }])}>
+              <Button size="small" onClick={() => setScores((arr) => [...arr, { factor: '', weight: 1, direction: 1 as const }])}>
                 + 添加打分因子
               </Button>
               <span>Top N: </span>

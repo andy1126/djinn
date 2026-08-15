@@ -8,8 +8,17 @@ interface Props {
   height?: number
 }
 
+interface LineSeries {
+  name: string
+  type: 'line'
+  data: (string | number)[][]
+  showSymbol: boolean
+  smooth?: boolean
+  lineStyle: { width: number; type?: string }
+}
+
 export default function EquityCurveChart({ equity, benchmark, logScale, height = 360 }: Props) {
-  const series: any[] = [
+  const series: LineSeries[] = [
     {
       name: '策略净值',
       type: 'line',

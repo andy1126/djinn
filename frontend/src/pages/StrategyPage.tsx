@@ -8,6 +8,7 @@ import {
 import { PlusOutlined } from '@ant-design/icons'
 import {
   createUserStrategy, deleteUserStrategy, listStrategies, listUserStrategies, updateUserStrategy, validateUserStrategy,
+  errDetail,
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import StrategyParamForm from '@/components/StrategyParamForm'
@@ -104,13 +105,13 @@ export default function StrategyPage() {
       setCreating(false)
       updateConfig('strategy', { name: s.name, params: {} })
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '创建失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const updateMut = useMutation({
     mutationFn: ({ id, req }: { id: string; req: Parameters<typeof updateUserStrategy>[1] }) =>
       updateUserStrategy(id, req),
     onSuccess: () => { message.success('代码已保存'); invalidate() },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '保存失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const deleteMut = useMutation({
     mutationFn: deleteUserStrategy,
@@ -125,12 +126,12 @@ export default function StrategyPage() {
         }
       }
     },
-    onError: (e: any) => message.error(e?.response?.data?.detail || '删除失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
   const validateMut = useMutation({
     mutationFn: validateUserStrategy,
     onSuccess: (r) => setValidate(r),
-    onError: (e: any) => message.error(e?.response?.data?.detail || '验证失败'),
+    onError: (e) => message.error(errDetail(e)),
   })
 
   const startCreate = () => {
@@ -172,7 +173,7 @@ export default function StrategyPage() {
 
   return (
     <Row gutter={16}>
-      <Col span={8}>
+      <Col xs={24} sm={12} lg={8}>
         <Card
           title="策略列表"
           extra={<Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>新建</Button>}
@@ -234,15 +235,15 @@ export default function StrategyPage() {
         </Card>
       </Col>
 
-      <Col span={16}>
+      <Col xs={24} md={16}>
         {creating ? (
           <Card title="新建策略" extra={<Button onClick={() => setCreating(false)}>取消</Button>}>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <Col span={8}>
+              <Col xs={24} sm={12} lg={8}>
                 <Typography.Text>名称</Typography.Text>
                 <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="如 MyMAC" />
               </Col>
-              <Col span={8}>
+              <Col xs={24} sm={12} lg={8}>
                 <Typography.Text>类型</Typography.Text>
                 <Select
                   style={{ width: '100%' }}
@@ -251,7 +252,7 @@ export default function StrategyPage() {
                   options={[{ label: 'Python', value: 'python' }, { label: 'Pine Script', value: 'pine' }]}
                 />
               </Col>
-              <Col span={8}>
+              <Col xs={24} sm={12} lg={8}>
                 <Typography.Text>说明(可选)</Typography.Text>
                 <Input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
               </Col>
