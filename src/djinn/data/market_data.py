@@ -106,6 +106,11 @@ class MarketData:
         row = self.df.loc[ts]
         return self._row_to_bar(ts, row)  # type: ignore[arg-type]
 
+    def bar_at_index(self, pos: int) -> Bar:
+        """按 iloc 位置取 Bar(D8:引擎预计算 ts→iloc 映射后 O(1) 取行)。"""
+        ts = pd.Timestamp(self.df.index[pos])
+        return self._row_to_bar(ts, self.df.iloc[pos])
+
     def _row_to_bar(self, ts: pd.Timestamp, row: pd.Series) -> Bar:
         def _g(col: str, default: float) -> float:
             v = row.get(col, default)

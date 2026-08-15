@@ -188,6 +188,48 @@ def test_daily_valuation_point_in_time() -> None:
     assert pe.iloc[-1] == 20.0
 
 
+def test_fundamental_panels_fetch_once_per_symbol() -> None:
+    """C15:财报时序按标的取一次(而非按字段 ×N 重复拉取)。"""
+    from djinn.factor.engine import FactorEngine
+
+    class _CountingSource:
+        def __init__(self) -> None:
+            self.history_calls = 0
+            self.symbols_seen: list[str] = []
+
+        def get_history(self, symbol, start, end, market=None):
+            self.history_calls += 1
+            self.symbols_seen.append(symbol)
+            idx = pd.bdate_range(start, end)
+            return pd.DataFrame(
+                {
+                    "announce_date": idx,
+                    "roe": [12.0] * len(idx),
+                    "gross_margin": [0.3] * len(idx),
+                },
+                index=idx,
+            )
+
+        def get_daily_valuation(self, symbol, start, end, market=None):
+            return pd.DataFrame()
+
+        def get_snapshot(self, symbols, when, market=None):
+            return pd.DataFrame(index=symbols)
+
+    eng = FactorEngine()
+    start, end = date(2024, 1, 2), date(2024, 1, 31)
+    trading_index = pd.DatetimeIndex(pd.bdate_range(start, end))
+    src = _CountingSource()
+    panels = eng._fundamental_panels(
+        ("roe", "gross_margin"), ["A", "B"], trading_index, start, end, src, Market.CN
+    )
+    # 每个标的只拉一次财报时序(2 标的),而非 2 标的 × 2 字段 = 4
+    assert src.history_calls == 2
+    assert sorted(src.symbols_seen) == ["A", "B"]
+    assert panels["roe"]["A"].notna().all()
+    assert panels["gross_margin"]["B"].notna().all()
+
+
 # ── 真实 akshare(需网络)─────────────────────────────────
 
 

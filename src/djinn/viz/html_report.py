@@ -1,11 +1,14 @@
-"""Jinja2 HTML 报告:汇总指标表 + 内嵌 plotly 交互图为单页 HTML。"""
+"""Jinja2 HTML 报告:汇总指标表 + 内嵌 plotly 交互图为单页 HTML。
+
+plotly 为可选依赖(``djinn[viz]``),延迟到函数内导入(E13)。
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
-import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from djinn.analytics.report import Report
@@ -23,8 +26,19 @@ def _env() -> Environment:
     )
 
 
+def _go() -> Any:
+    """延迟导入 plotly.graph_objects;缺失给出友好报错。"""
+    try:
+        import plotly.graph_objects as go
+
+        return go
+    except ImportError as e:  # pragma: no cover - 无 viz 环境
+        raise ImportError("HTML 报告需要安装 djinn[viz](pip install djinn[viz])") from e
+
+
 def _equity_fig(report: Report) -> str:
     """净值 + 基准叠加 plotly 图(内嵌 HTML)。"""
+    go = _go()
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -56,6 +70,7 @@ def _equity_fig(report: Report) -> str:
 
 
 def _drawdown_fig(report: Report) -> str:
+    go = _go()
     dd = report.drawdown_curve
     fig = go.Figure()
     fig.add_trace(
@@ -78,6 +93,7 @@ def _drawdown_fig(report: Report) -> str:
 
 
 def _positions_fig(report: Report) -> str:
+    go = _go()
     w = report.weights.copy()
     if w.empty:
         return "<p>无持仓数据</p>"
@@ -98,6 +114,7 @@ def _positions_fig(report: Report) -> str:
 
 
 def _monthly_heatmap_fig(report: Report) -> str:
+    go = _go()
     mr = report.monthly_returns
     if mr.empty:
         return "<p>无月度收益数据</p>"

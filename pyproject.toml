@@ -29,9 +29,6 @@ dependencies = [
     "exchange_calendars>=4.5",
     "jinja2>=3.1",
     "openpyxl>=3.1",
-    "matplotlib>=3.8",
-    "seaborn>=0.13",
-    "plotly>=5.20",
     "joblib>=1.4",
     "pynescript>=0.3.0",
     "click>=8.1", # typer runtime
@@ -40,6 +37,11 @@ dependencies = [
 [project.optional-dependencies]
 akshare = ["akshare>=1.12"]
 tushare = ["tushare>=1.4"]
+viz = [
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "plotly>=5.20",
+]
 web = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
@@ -61,6 +63,10 @@ dev = [
     "uvicorn[standard]>=0.27",
     "httpx>=0.27",
     "python-multipart>=0.0.9",
+    # viz 依赖(供 test_viz 与 HTML 报告)
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "plotly>=5.20",
 ]
 
 [project.scripts]

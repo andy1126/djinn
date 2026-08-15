@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import math
 import os
 import queue
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
@@ -85,14 +87,26 @@ class JobRecord:
 
 @dataclass
 class ProgressCallback:
-    """进度回调(线程安全,供后台任务上报)。"""
+    """进度回调(线程安全,供后台任务上报)。
+
+    E12:内置节流——高频 ``update`` 每 ``min_interval_sec`` 秒才写一次 DB
+    (降低进度写放大);``force=True`` 或终态跳过节流。
+    """
 
     job_id: str
     registry: JobRegistry
     lock: threading.Lock = field(default_factory=threading.Lock)
+    min_interval_sec: float = 0.5
 
-    def update(self, progress: float, stage: str = "") -> None:
+    def __post_init__(self) -> None:
+        self._last_write = 0.0
+
+    def update(self, progress: float, stage: str = "", *, force: bool = False) -> None:
+        now = time.monotonic()
         with self.lock:
+            if not force and now - self._last_write < self.min_interval_sec:
+                return
+            self._last_write = now
             self.registry.update(self.job_id, progress=progress, stage=stage)
 
 
@@ -135,32 +149,39 @@ class JobRegistry:
         return datetime.now(UTC).isoformat()
 
     def create(self, kind: str, meta: dict[str, Any] | None = None) -> JobRecord:
-        job_id = uuid.uuid4().hex[:12]
-        rec = JobRecord(
-            job_id=job_id,
-            kind=kind,
-            status="pending",
-            result={"__meta__": meta or {}},
-            created_at=self._now(),
-            updated_at=self._now(),
-        )
-        with self._lock, self._conn() as c:
-            c.execute(
-                "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    rec.job_id,
-                    rec.kind,
-                    rec.status,
-                    rec.progress,
-                    rec.stage,
-                    rec.error,
-                    json.dumps(rec.result) if rec.result else None,
-                    rec.created_at,
-                    rec.updated_at,
-                ),
+        # E12:uuid4 hex[:12] 撞车即重试(否则 500);连续冲突 3 次才报错。
+        created = self._now()
+        for _ in range(3):
+            job_id = uuid.uuid4().hex[:12]
+            rec = JobRecord(
+                job_id=job_id,
+                kind=kind,
+                status="pending",
+                result={"__meta__": meta or {}},
+                created_at=created,
+                updated_at=created,
             )
-            c.commit()
-        return rec
+            try:
+                with self._lock, self._conn() as c:
+                    c.execute(
+                        "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            rec.job_id,
+                            rec.kind,
+                            rec.status,
+                            rec.progress,
+                            rec.stage,
+                            rec.error,
+                            json.dumps(rec.result) if rec.result else None,
+                            rec.created_at,
+                            rec.updated_at,
+                        ),
+                    )
+                    c.commit()
+            except sqlite3.IntegrityError:
+                continue  # 主键冲突,换新 id 重试
+            return rec
+        raise RuntimeError("生成任务 ID 失败(连续主键冲突)")
 
     def update(
         self,
@@ -240,6 +261,48 @@ class JobRegistry:
                 ).fetchall()
             return [self._row_to_rec(r) for r in rows]
 
+    def list_by_status(self, statuses: builtins.list[str]) -> builtins.list[JobRecord]:
+        """按状态集查询全部记录(无 limit)——孤儿恢复用,避免漏掉更老的任务(E7)。"""
+        if not statuses:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                f"SELECT * FROM jobs WHERE status IN ({placeholders})",
+                tuple(statuses),
+            ).fetchall()
+            return [self._row_to_rec(r) for r in rows]
+
+    def purge_older_than(self, days: int, keep_kinds: tuple[str, ...] = ()) -> int:
+        """删除 ``updated_at`` 早于 ``days`` 天且已终态的 job 记录及其产物(E6)。
+
+        仅清理 ``done / error / cancelled``(不碰 running / pending);同步删除报告
+        缓存与 exports 目录。返回删除条数。
+        """
+        import shutil
+
+        from djinn.api.report_store import delete as delete_report
+
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                "SELECT job_id, kind FROM jobs "
+                "WHERE status IN ('done','error','cancelled') AND updated_at < ?",
+                (cutoff,),
+            ).fetchall()
+        ids = [str(r["job_id"]) for r in rows if r["kind"] not in keep_kinds]
+        exports_root = Path(".cache/exports")
+        for job_id in ids:
+            with self._lock, self._conn() as c:
+                c.execute("DELETE FROM jobs WHERE job_id=?", (job_id,))
+                c.commit()
+            delete_report(job_id)
+            with suppress(OSError):
+                shutil.rmtree(exports_root / job_id, ignore_errors=True)
+        if ids:
+            _log.info("清理 %d 个过期任务", len(ids))
+        return len(ids)
+
     def subscribe(self, job_id: str, cb: Callable[[JobRecord], None]) -> None:
         with self._lock:
             self._subscribers.setdefault(job_id, []).append(cb)
@@ -251,7 +314,9 @@ class JobRegistry:
                     self._subscribers[job_id].remove(cb)
 
     def _notify(self, rec: JobRecord) -> None:
-        cbs = self._subscribers.get(rec.job_id, [])
+        # E12:锁内取订阅者快照,锁外执行回调(避免与 subscribe/unsubscribe 竞态)
+        with self._lock:
+            cbs = list(self._subscribers.get(rec.job_id, []))
         for cb in cbs:
             with suppress(Exception):
                 cb(rec)
@@ -760,6 +825,9 @@ _RUNNERS: dict[str, Callable[..., None]] = {
     "screen": run_screen_job,
 }
 
+# E7:已提交恢复的任务 id(防 lifespan 重入重复提交)。
+_recovered_jobs: set[str] = set()
+
 
 def recover_orphaned_jobs(
     registry: JobRegistry,
@@ -775,12 +843,14 @@ def recover_orphaned_jobs(
     """
     if os.environ.get("DJINN_TEST") == "1":
         return 0
-    # list 需遍历全部 kind(其 kind 参数是单值过滤),故不传 kind、放大 limit。
-    jobs = registry.list(limit=1000)
+    # E7:按状态集查询(无 limit,避免更老孤儿被漏掉);幂等防重复提交。
     orphaned = [
-        j for j in jobs if j.status in ("running", "pending") and j.kind in _RUNNERS
+        j
+        for j in registry.list_by_status(["running", "pending"])
+        if j.kind in _RUNNERS and j.job_id not in _recovered_jobs
     ]
     for job in orphaned:
+        _recovered_jobs.add(job.job_id)
         try:
             thread = threading.Thread(
                 target=_RUNNERS[job.kind],
@@ -792,6 +862,7 @@ def recover_orphaned_jobs(
             thread.start()
             _log.info("恢复孤儿任务 %s (%s)", job.job_id, job.kind)
         except Exception as e:
+            _recovered_jobs.discard(job.job_id)  # 失败可重试
             _log.error("恢复任务 %s 失败: %s", job.job_id, e)
     return len(orphaned)
 

@@ -77,6 +77,40 @@ def test_factor_no_future_values() -> None:
     assert out.index.equals(prices.index)
 
 
+def test_beta_factor_real_benchmark() -> None:
+    """C6:BetaFactor 用真实基准(ohlcv["__benchmark__"])时 beta 精确为 ±1。"""
+    from djinn.factor.library import BetaFactor
+
+    n = 80
+    idx = _trading_index(n)
+    rng = np.random.default_rng(0)
+    mkt = pd.Series(rng.normal(0.0005, 0.01, n), index=idx)
+    mkt_vals = mkt.to_numpy()
+    # close = cumprod(1+r) → pct_change 精确等于 r / -r
+    prices = pd.DataFrame(
+        {
+            "A": 100 * np.cumprod(1.0 + mkt_vals),
+            "B": 100 * np.cumprod(1.0 - mkt_vals),
+        },
+        index=idx,
+    )
+    f = BetaFactor(period=20)
+    out = f.compute(prices, {"__benchmark__": mkt}, {})
+    assert out["A"].iloc[-1] == pytest.approx(1.0, abs=1e-6)
+    assert out["B"].iloc[-1] == pytest.approx(-1.0, abs=1e-6)
+
+
+def test_beta_factor_benchmark_degrade() -> None:
+    """C6:无基准注入 → 退化为等权代理,不抛错。"""
+    from djinn.factor.library import BetaFactor
+
+    prices = _prices(
+        {"A": [10.0 + i for i in range(60)], "B": [20.0 - i for i in range(60)]}
+    )
+    out = BetaFactor(period=20).compute(prices, {}, {})
+    assert not out["A"].iloc[-1:].isna().all()
+
+
 def test_factor_registry_all_instantiable() -> None:
     """注册表所有因子可无参实例化并被 compute 调用(价格类)。"""
     prices = _prices(

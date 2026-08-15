@@ -23,8 +23,8 @@ _log = get_logger(__name__)
 
 
 @dataclass
-class Fill:
-    """单笔成交(Decimal 口径)。"""
+class LedgerEntry:
+    """单笔成交(Decimal 口径)的账本分录。"""
 
     timestamp: date
     symbol: str
@@ -61,7 +61,7 @@ class Account:
     t_plus_1: bool = False
     cash: Decimal = field(init=False)
     positions: dict[str, Position] = field(default_factory=dict)
-    fills: list[Fill] = field(default_factory=list)
+    fills: list[LedgerEntry] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.initial_cash = q_money(self.initial_cash)
@@ -101,7 +101,7 @@ class Account:
         freeze: bool | None = None,
         timestamp: date | None = None,
         tag: str = "",
-    ) -> Fill:
+    ) -> LedgerEntry:
         """买入成交:扣现金、更新持仓均价。
 
         Args:
@@ -130,7 +130,9 @@ class Account:
             pos.frozen = q_shares(pos.frozen + qty)
         else:
             pos.available = q_shares(pos.available + qty)
-        fill = Fill(timestamp or date.min, symbol, "buy", qty, price, commission, tag)
+        fill = LedgerEntry(
+            timestamp or date.min, symbol, "buy", qty, price, commission, tag
+        )
         self.fills.append(fill)
         return fill
 
@@ -143,7 +145,7 @@ class Account:
         *,
         timestamp: date | None = None,
         tag: str = "",
-    ) -> Fill:
+    ) -> LedgerEntry:
         """卖出成交:加现金、校验 available、累计已实现盈亏。"""
         qty = q_shares(qty)
         if qty <= 0:
@@ -167,7 +169,9 @@ class Account:
             pos.avg_cost = D(0)
             pos.frozen = D(0)
             pos.available = D(0)
-        fill = Fill(timestamp or date.min, symbol, "sell", qty, price, commission, tag)
+        fill = LedgerEntry(
+            timestamp or date.min, symbol, "sell", qty, price, commission, tag
+        )
         self.fills.append(fill)
         return fill
 

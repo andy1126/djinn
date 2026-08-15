@@ -18,6 +18,7 @@ from djinn.factor.analysis import (
     monotonicity_score,
     quantile_returns,
 )
+from djinn.factor.analysis.report import _recommend_freq
 
 
 def _prices(rows: int = 60, cols: int = 30, seed: int = 0) -> pd.DataFrame:
@@ -88,6 +89,26 @@ def test_analyze_factor_report_serializable() -> None:
     assert "ic_summary" in d and "quantile_returns" in d
     assert set(d["ic_decay"].keys()) == {"1", "5", "10"}
     assert len(d["ic_by_group"]["index"]) == 2  # 两个行业
+
+
+def test_recommend_rebalance_rule() -> None:
+    """C11:IC 半衰期映射到调仓档(峰值 1 期 0.08,10 期跌破 50% → monthly)。"""
+    assert _recommend_freq({1: 0.08, 5: 0.07, 10: 0.03, 21: 0.01}) == "monthly"
+    # 快速衰减(峰值 0.1,5 期即跌到 0.02 < 0.05)→ weekly
+    assert _recommend_freq({1: 0.10, 5: 0.02, 10: 0.01, 21: 0.0}) == "weekly"
+    # 全程未衰减 → quarterly
+    assert _recommend_freq({1: 0.05, 5: 0.05, 10: 0.04, 21: 0.04}) == "quarterly"
+    # 无有效值 → None
+    assert _recommend_freq({}) is None
+
+
+def test_analyze_factor_report_recommendation_present() -> None:
+    prices = _prices()
+    fwd = compute_forward_returns(prices, [1, 5, 10, 21])
+    factor = fwd[1].copy()
+    report = analyze_factor(factor, fwd, name="test")
+    assert report.recommended_rebalance in {"daily", "weekly", "monthly", "quarterly"}
+    assert "recommended_rebalance" in report.to_dict()
 
 
 def test_forward_returns_alignment() -> None:

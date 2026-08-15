@@ -14,6 +14,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -139,12 +140,42 @@ class FactorEngine:
                 fundamentals_source,
                 market,
             )
+        # C6:为声明了 benchmark 的因子预拉基准日收益(经 __benchmark__ 键注入)
+        for f in factors:
+            bench = getattr(f, "benchmark", None)
+            if bench:
+                bench_rets = self._benchmark_returns(
+                    bench, start, end, registry, market, adjust
+                )
+                if len(bench_rets):
+                    # PanelDict 值类型为 DataFrame,基准为 Series → 经宽松 dict 注入
+                    ohlcv_any: dict[str, Any] = ohlcv
+                    ohlcv_any["__benchmark__"] = bench_rets
+                break
+
         data: dict[str, Panel] = {}
         for f in factors:
             _log.info("计算因子 %s(%d 标的)", f.name, len(universe))
             f.validate_inputs(fundamentals, ohlcv)
             data[f.name] = f.compute(prices, ohlcv, fundamentals)
         return FactorPanel(data=data)
+
+    def _benchmark_returns(
+        self,
+        benchmark: str,
+        start: date,
+        end: date,
+        registry: ProviderRegistry,
+        market: Market | None,
+        adjust: Adjust,
+    ) -> pd.Series:
+        """拉取基准日收益序列;失败返回空 Series(因子内部退化为等权代理)。"""
+        try:
+            md = registry.get_ohlcv(benchmark, start, end, adjust, market=market)
+            return md.df[COL_CLOSE].pct_change()
+        except Exception as e:
+            _log.warning("基准 %s 拉取失败,beta 退化为等权代理: %s", benchmark, e)
+            return pd.Series(dtype=float)
 
     # ── 行情面板 ────────────────────────────────────────
     def _ohlcv_panels(
@@ -200,9 +231,21 @@ class FactorEngine:
         source: FundamentalsSource,
         market: Market | None,
     ) -> PanelDict:
+        # C15:按标的各取一次财报时序 + 日频估值,再按字段 asof 对齐;
+        # 消除"按字段循环对每个标的重复拉取"的 ×N 冗余(财报时序被拉 9 遍)。
+        hist_start = start - timedelta(days=_HISTORY_LOOKBACK_DAYS)
+        histories: dict[str, pd.DataFrame] = {}
+        valuations: dict[str, pd.DataFrame] = {}
+        for sym in universe:
+            histories[sym] = _safe_frame(
+                source.get_history, sym, hist_start, end, market
+            )
+            valuations[sym] = _safe_frame(
+                source.get_daily_valuation, sym, start, end, market
+            )
         return {
             f: self._asof_field_panel(
-                f, universe, trading_index, start, end, source, market
+                f, universe, trading_index, end, source, market, histories, valuations
             )
             for f in fields
         }
@@ -212,41 +255,43 @@ class FactorEngine:
         field: str,
         universe: list[str],
         trading_index: pd.DatetimeIndex,
-        start: date,
         end: date,
         source: FundamentalsSource,
         market: Market | None,
+        histories: dict[str, pd.DataFrame],
+        valuations: dict[str, pd.DataFrame],
     ) -> Panel:
-        """单基本面字段的 point-in-time 宽表。
+        """单基本面字段的 point-in-time 宽表(输入为已预取的 per-symbol 时序)。
 
         优先用财报时序按 ``announce_date`` asof 到交易日(真正 PIT);
         无该字段时序(如估值快照)退化为区间末日常数(明确标注的近似)。
         """
         cols: dict[str, pd.Series] = {}
-        hist_start = start - timedelta(days=_HISTORY_LOOKBACK_DAYS)
         for sym in universe:
             series: pd.Series | None = None
             # 估值类字段:优先日频估值序列(真正 point-in-time,无前视)
-            if field in VALUATION_FIELDS:
-                try:
-                    daily = source.get_daily_valuation(sym, start, end, market)
-                    if daily is not None and len(daily) and field in daily.columns:
-                        series = (
-                            pd.to_numeric(daily[field], errors="coerce")
-                            .reindex(trading_index)
-                            .ffill()
-                        )
-                except Exception as e:
-                    _log.debug("%s 字段 %s 日频估值不可用: %s", sym, field, e)
+            daily = valuations.get(sym)
+            if (
+                field in VALUATION_FIELDS
+                and daily is not None
+                and len(daily)
+                and field in daily.columns
+            ):
+                series = (
+                    pd.to_numeric(daily[field], errors="coerce")
+                    .reindex(trading_index)
+                    .ffill()
+                )
             if series is None:
-                try:
-                    hist = source.get_history(sym, hist_start, end, market)
-                    if field in hist.columns and "announce_date" in hist.columns:
-                        series = _asof_series(
-                            hist[field], hist["announce_date"], trading_index
-                        )
-                except Exception as e:
-                    _log.debug("%s 字段 %s 时序不可用: %s", sym, field, e)
+                hist = histories.get(sym)
+                if (
+                    hist is not None
+                    and field in hist.columns
+                    and "announce_date" in hist.columns
+                ):
+                    series = _asof_series(
+                        hist[field], hist["announce_date"], trading_index
+                    )
             if series is None:
                 # 退化:用 when=end 的快照常数填充(估值类近似,非严格 PIT)
                 if field not in self._warned_fields:
@@ -264,6 +309,15 @@ class FactorEngine:
                 series = pd.Series(val, index=trading_index)
             cols[sym] = series.reindex(trading_index)
         return pd.DataFrame(cols)
+
+
+def _safe_frame(fn: Any, *args: Any) -> pd.DataFrame:
+    """调用 ``fn(*args)`` 返回 DataFrame;异常 / 非 DataFrame → 空帧。"""
+    try:
+        out = fn(*args)
+        return out if isinstance(out, pd.DataFrame) else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 
 def _asof_series(

@@ -5,13 +5,21 @@ CLI 与(Phase 2)FastAPI 都构造同一个 BacktestConfig 调用同一内核。
 
 from __future__ import annotations
 
+import warnings
 from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from djinn.config.screen_models import ScreenCondition
 from djinn.data.schema import Adjust, Market
-from djinn.screen.screener import ScreenCondition
+
+# 市场 → 默认币种(currency=None 时按 resolved_market 映射)。
+_CURRENCY_BY_MARKET: dict[Market, str] = {
+    Market.CN: "CNY",
+    Market.HK: "HKD",
+    Market.US: "USD",
+}
 
 
 class UniverseConfig(BaseModel):
@@ -63,16 +71,28 @@ class PeriodConfig(BaseModel):
 class AccountConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     initial_cash: float = Field(default=100000.0, gt=0)
-    currency: str = Field(default="USD")
+    # E11:None 时由 BacktestConfig 按 resolved_market() 映射(CN→CNY/HK→HKD/US→USD)
+    currency: str | None = Field(default=None)
     t_plus_1: bool | None = Field(default=None, description="A 股自动启用;显式覆盖")
 
 
 class SlippageConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["zero", "none", "fixed_bps", "fixed", "random", "volume_share"] = (
-        "zero"
-    )
+    type: Literal["zero", "fixed_bps", "fixed", "random", "volume_share"] = "zero"
     bps: float = Field(default=5.0, ge=0)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _migrate_none(cls, v: object) -> object:
+        # E11:"none" 别名 → "zero"(旧配置迁移)
+        if isinstance(v, str) and v.lower() == "none":
+            warnings.warn(
+                "slippage.type='none' 已废弃,请改用 'zero'",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return "zero"
+        return v
 
 
 class CommissionConfig(BaseModel):
@@ -175,7 +195,8 @@ class RiskConfig(BaseModel):
 class OutputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dir: str = Field(default="./results")
-    export: list[Literal["csv", "excel"]] = Field(default=["csv"])
+    # E11:默认不导出(避免 API 后台任务脏写 ./results);CLI 示例显式声明
+    export: list[Literal["csv", "excel"]] = Field(default_factory=list)
     report: Literal["html", "none"] = "none"
     rolling_window: int = Field(default=63, ge=5)
 
@@ -202,6 +223,15 @@ class BacktestConfig(BaseModel):
             return v
         return Adjust(str(v))
 
+    @model_validator(mode="after")
+    def _resolve_currency(self) -> BacktestConfig:
+        # E11:currency=None 时按市场映射币种
+        if self.account.currency is None:
+            self.account.currency = _CURRENCY_BY_MARKET.get(
+                self.resolved_market(), "USD"
+            )
+        return self
+
     def resolved_market(self) -> Market:
         """确定回测市场(universe.market,或由标的 / 指数推断)。"""
         if self.universe.market is not None:
@@ -210,7 +240,14 @@ class BacktestConfig(BaseModel):
 
         if self.universe.symbols:
             return detect_market(self.universe.symbols[0])
-        # 无显式标的(纯 index / screen 池):默认 A 股(akshare 免费主线)
+        # E11:纯 index 池按指数映射市场(HSI→HK、SP500/...→US);查不到再默认 CN
+        if self.universe.index:
+            from djinn.data.universe import UNIVERSE_INDEX_MAP
+
+            entry = UNIVERSE_INDEX_MAP.get(self.universe.index.upper())
+            if entry is not None:
+                return entry["market"]  # type: ignore[return-value]
+        # 无显式标的(纯 screen 池):默认 A 股(akshare 免费主线)
         return Market.CN
 
     def resolved_t_plus_1(self) -> bool:

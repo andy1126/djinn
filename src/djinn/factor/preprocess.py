@@ -22,26 +22,26 @@ def winsorize(
 
     - ``mad``:中位数 ± n × MAD(对厚尾稳健);
     - ``sigma``:均值 ± n × 标准差。
+
+    D12:全面板向量化(无逐行 Python 回调),与旧实现逐值相等。
     """
-
-    def _clip(row: pd.Series) -> pd.Series:
-        x = row.dropna()
-        if len(x) < 2:
-            return row
-        if method == "mad":
-            med = x.median()
-            mad = (x - med).abs().median()
-            if mad == 0:
-                return row
-            lo, hi = med - n * 1.4826 * mad, med + n * 1.4826 * mad
-        else:
-            mu, sd = x.mean(), x.std()
-            if sd == 0:
-                return row
-            lo, hi = mu - n * sd, mu + n * sd
-        return row.clip(lower=lo, upper=hi)
-
-    return df.apply(_clip, axis=1)
+    too_few = df.notna().sum(axis=1) < 2  # 有效样本 <2 的行不 clip(保持原值)
+    if method == "mad":
+        med = df.median(axis=1)
+        mad = df.sub(med, axis=0).abs().median(axis=1)
+        scale = n * 1.4826
+        lo = med - scale * mad
+        hi = med + scale * mad
+        noop = (mad == 0) | too_few  # MAD==0(全等)与样本不足 → 不截断
+    else:
+        mu = df.mean(axis=1)
+        sd = df.std(axis=1)
+        lo = mu - n * sd
+        hi = mu + n * sd
+        noop = (sd == 0) | too_few
+    lo = lo.where(~noop, -np.inf)
+    hi = hi.where(~noop, np.inf)
+    return df.clip(lower=lo, upper=hi, axis=0)
 
 
 def standardize(

@@ -43,6 +43,33 @@ def test_winsorize_clips_extremes() -> None:
     assert w.iloc[0, 0] == pytest.approx(w.iloc[0].drop(index="S0").max(), rel=0.5)
 
 
+def test_winsorize_vectorized_matches_hand_computed() -> None:
+    """D12:向量化 winsorize 与逐行手算 MAD 截断逐值相等,且 dtype 保持 float64。"""
+    df = _panel(rows=6, cols=8, seed=4)
+    w = winsorize(df, method="mad", n=3.0)
+    assert all(dt == np.dtype("float64") for dt in w.dtypes)
+    # 手算首行 MAD 截断
+    row = df.iloc[0].dropna()
+    med = row.median()
+    mad = (row - med).abs().median()
+    lo = med - 3.0 * 1.4826 * mad
+    hi = med + 3.0 * 1.4826 * mad
+    expected = df.iloc[0].clip(lower=lo, upper=hi)
+    pd.testing.assert_series_equal(w.iloc[0], expected, check_names=False)
+
+
+def test_winsorize_noop_rows() -> None:
+    """D12:全等截面(mad=0)与样本不足(<2)不截断。"""
+    idx = pd.DatetimeIndex([date(2024, 1, 1)])
+    equal = pd.DataFrame({"A": [5.0], "B": [5.0], "C": [5.0]}, index=idx)
+    assert winsorize(equal, "mad", 3.0).iloc[0].tolist() == [5.0, 5.0, 5.0]
+
+    sparse = pd.DataFrame({"A": [1.0], "B": [np.nan], "C": [np.nan]}, index=idx)
+    out = winsorize(sparse, "mad", 3.0)
+    assert out.iloc[0]["A"] == 1.0
+    assert pd.isna(out.iloc[0]["B"])
+
+
 def test_neutralize_removes_market_cap_correlation() -> None:
     """中性化后因子与 ln(市值) 截面相关性绝对值显著下降。"""
     rng = np.random.default_rng(7)

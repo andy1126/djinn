@@ -213,3 +213,32 @@ def test_get_profile_missing_fields_are_none(monkeypatch: pytest.MonkeyPatch) ->
     assert profile["operating_margin"] is None
     assert profile["sector"] is None
     assert profile["summary"] is None
+
+
+def test_info_cache_reuses_ticker_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D11:详情端点多次 info 需求合并为一次 Ticker.info 网络拉取(TTL 内)。"""
+    calls = {"n": 0}
+    info_with_price = {**FAKE_INFO, "currentPrice": 150.0}
+
+    class _CountingTicker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        @property
+        def info(self) -> dict:
+            calls["n"] += 1
+            return info_with_price
+
+    monkeypatch.setitem(
+        sys.modules, "yfinance", types.SimpleNamespace(Ticker=_CountingTicker)
+    )
+    p = YahooProvider()
+    p.get_profile("AAPL", Market.US)
+    p.get_stock_name("AAPL", Market.US)
+    assert p.get_stock_price("AAPL", Market.US) == pytest.approx(150.0)
+    assert calls["n"] == 1  # 三次 info 需求仅一次网络拉取
+
+    # 强制过期(timestamp 置 0)→ 再取重新拉取
+    p._info_cache["AAPL"] = (0.0, info_with_price)
+    p.get_profile("AAPL", Market.US)
+    assert calls["n"] == 2

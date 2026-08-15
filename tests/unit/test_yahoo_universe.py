@@ -30,12 +30,17 @@ def _monkey_urlopen(monkeypatch, handler) -> None:
     )
 
 
+def _req_url(req: object) -> str:
+    """从 urlopen 的首参(字符串或 Request)提取 URL 字符串。"""
+    return str(getattr(req, "full_url", req))
+
+
 def test_yahoo_index_components_hsi(monkeypatch, tmp_path) -> None:
     p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
     captured: dict[str, object] = {}
 
-    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
-        captured["url"] = url
+    def fake_urlopen(req: object, timeout: int = 20) -> io.IOBase:
+        captured["url"] = _req_url(req)
         captured["timeout"] = timeout
         return io.BytesIO(_csv_bytes(["0101.HK", "1024.HK", "1038.HK"]))
 
@@ -65,8 +70,8 @@ def test_yahoo_index_components_nasdaq100(monkeypatch, tmp_path) -> None:
     p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
     captured: dict[str, object] = {}
 
-    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
-        captured["url"] = url
+    def fake_urlopen(req: object, timeout: int = 20) -> io.IOBase:
+        captured["url"] = _req_url(req)
         return io.BytesIO(_csv_bytes(["NVDA", "AAPL", "MSFT", "GOOGL"]))
 
     _monkey_urlopen(monkeypatch, fake_urlopen)
@@ -123,6 +128,25 @@ def test_yahoo_index_components_network_error(monkeypatch, tmp_path) -> None:
     assert "yahoo" in str(ei.value)
 
 
+def test_yahoo_index_components_ua_header_and_retry(monkeypatch, tmp_path) -> None:
+    """E14:成分 CSV 请求带 UA 头,且首次失败重试一次。"""
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
+    calls = {"n": 0, "ua": None}
+
+    def flaky(req: object, timeout: int = 20) -> io.IOBase:
+        calls["n"] += 1
+        calls["ua"] = getattr(req, "get_header", lambda _: None)("User-agent")
+        if calls["n"] == 1:
+            raise OSError("transient")
+        return io.BytesIO(_csv_bytes(["NVDA", "AAPL"]))
+
+    _monkey_urlopen(monkeypatch, flaky)
+    cons = p.get_index_components("SP500")
+    assert cons == ["NVDA", "AAPL"]
+    assert calls["n"] == 2  # 失败一次后重试成功
+    assert calls["ua"] == "djinn/0.1"
+
+
 def test_yf_symbol_normalization() -> None:
     """行情层符号转换:美股带点 → 连字符;``.HK`` 后缀不改写。"""
     p = YahooProvider()
@@ -138,8 +162,8 @@ def test_yahoo_index_components_dowjones(monkeypatch, tmp_path) -> None:
     p = YahooProvider(cache=DataCache(cache_dir=tmp_path))
     captured: dict[str, object] = {}
 
-    def fake_urlopen(url: str, timeout: int) -> io.IOBase:
-        captured["url"] = url
+    def fake_urlopen(req: object, timeout: int = 20) -> io.IOBase:
+        captured["url"] = _req_url(req)
         return io.BytesIO(_csv_bytes(["GS", "CAT", "MSFT"]))
 
     _monkey_urlopen(monkeypatch, fake_urlopen)

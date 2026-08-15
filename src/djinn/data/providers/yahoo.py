@@ -11,6 +11,7 @@ yfinance 易发网络抖动 / 偶发空返回(尤其短时间多次请求后),
 from __future__ import annotations
 
 import math
+import random
 import threading
 import time
 from datetime import date
@@ -76,10 +77,14 @@ class YahooProvider(DataProvider):
     name = "yahoo"
     market = Market.US
 
+    # D11:info 缓存 TTL(秒)。同一 provider 实例(registry 单例)内把详情端点多次
+    # ``Ticker.info`` 合并为一次网络拉取;registry 单例保证进程内实际全局共享。
+    _INFO_TTL_SEC = 300.0
+
     def __init__(
         self,
         cache: DataCache | None = None,
-        rate_limit_sec: float = 0.0,
+        rate_limit_sec: float = 0.3,
         max_retries: int = 3,
     ) -> None:
         self.cache = cache or DataCache()
@@ -87,6 +92,26 @@ class YahooProvider(DataProvider):
         self.max_retries = max(1, max_retries)
         self._last_request = 0.0
         self._rate_lock = threading.Lock()  # 限速临界区(跨线程串行)
+        # D11:info TTL 缓存(key=symbol,value=(monotonic_ts, info_dict))
+        self._info_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._info_cache_lock = threading.Lock()
+
+    def _get_info_cached(self, symbol: str) -> dict[str, Any]:
+        """``Ticker(symbol).info`` 的进程内 TTL 缓存;异常向上抛(调用方决定降级)。"""
+        now = time.monotonic()
+        with self._info_cache_lock:
+            hit = self._info_cache.get(symbol)
+            if hit is not None and now - hit[0] < self._INFO_TTL_SEC:
+                return hit[1]
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        self._throttle()
+        info = yf.Ticker(symbol).info or {}
+        with self._info_cache_lock:
+            self._info_cache[symbol] = (now, info)
+        return info
 
     def supports(self, symbol: str, market: Market | None = None) -> bool:
         # yfinance 能拉美股字母代码与指数(^GSPC / ^HSI);A 股 6 位数字代码不交给它
@@ -184,8 +209,8 @@ class YahooProvider(DataProvider):
         ) from last_exc
 
     def _sleep_backoff(self, attempt: int) -> None:
-        """指数退避:0.5s, 1.5s, ... 抖动后给 yfinance 喘息窗口。"""
-        delay = 0.5 * (3**attempt)
+        """指数退避 + 抖动:``base * (0.5 + uniform(0,1))``,打散并发重试节奏(E14)。"""
+        delay = 0.5 * (3**attempt) * (0.5 + random.random())
         time.sleep(delay)
 
     def _normalize(self, raw: pd.DataFrame) -> pd.DataFrame:
@@ -239,10 +264,6 @@ class YahooProvider(DataProvider):
         ``when`` 仅作记录(info 为最新值,非历史 PIT)。网络抖动时按单标的降级,
         不整体失败。
         """
-        try:
-            import yfinance as yf
-        except ImportError as e:  # pragma: no cover
-            raise ProviderError("yfinance 未安装") from e
         rows: dict[str, dict[str, float]] = {}
         for sym in symbols:
             cache_symbol = f"info_{sym}"
@@ -251,9 +272,8 @@ class YahooProvider(DataProvider):
             if cached is not None and len(cached) and COL_REVENUE in cached.columns:
                 rows[sym] = {c: float(cached.iloc[0][c]) for c in cached.columns}
                 continue
-            self._throttle()
             try:
-                info = yf.Ticker(sym).info or {}
+                info = self._get_info_cached(sym)
             except Exception as e:
                 _log.warning("yfinance %s info 拉取失败,跳过: %s", sym, e)
                 continue
@@ -380,10 +400,22 @@ class YahooProvider(DataProvider):
         try:
             import urllib.request
 
-            with urllib.request.urlopen(url, timeout=20) as resp:
-                raw = pd.read_csv(resp)
+            req = urllib.request.Request(url, headers={"User-Agent": "djinn/0.1"})
+            raw = None
+            for attempt in range(2):  # E14:一次重试 + UA 头
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        raw = pd.read_csv(resp)
+                    break
+                except Exception:
+                    if attempt == 0:
+                        time.sleep(1.0)
+                        continue
+                    raise
         except Exception as e:
             raise ProviderError(f"yahoo 拉取指数 {index} 成分失败: {e}") from e
+        if raw is None:  # pragma: no cover - 两次失败必抛,防御性兜底
+            raise ProviderError(f"yahoo 拉取指数 {index} 成分失败")
         if "Symbol" not in raw.columns or len(raw) == 0:
             raise DataError(f"yahoo 指数 {index} 成分 CSV 缺少 Symbol 列或为空")
         # 并行提取 (symbol, name),保持去重保序;Name 列缺失时名称置空串
@@ -465,11 +497,7 @@ class YahooProvider(DataProvider):
         if market is Market.CN:
             raise NotImplementedError("yahoo 不支持 A 股名称")
         try:
-            import yfinance as yf
-        except ImportError as e:  # pragma: no cover
-            raise ProviderError("yfinance 未安装") from e
-        try:
-            info = yf.Ticker(symbol).info or {}
+            info = self._get_info_cached(symbol)
         except Exception as e:
             _log.warning("yfinance %s name 拉取失败: %s", symbol, e)
             return ""
@@ -479,11 +507,7 @@ class YahooProvider(DataProvider):
         if market is Market.CN:
             raise NotImplementedError("yahoo 不支持 A 股价格")
         try:
-            import yfinance as yf
-        except ImportError as e:  # pragma: no cover
-            raise ProviderError("yfinance 未安装") from e
-        try:
-            info = yf.Ticker(symbol).info or {}
+            info = self._get_info_cached(symbol)
         except Exception as e:
             _log.warning("yfinance %s price 拉取失败: %s", symbol, e)
             raise DataError(f"yfinance 无 {symbol} 价格") from e
@@ -503,12 +527,7 @@ class YahooProvider(DataProvider):
         if market is Market.CN:
             raise NotImplementedError("yahoo 不支持 A 股 profile")
         try:
-            import yfinance as yf
-        except ImportError as e:  # pragma: no cover
-            raise ProviderError("yfinance 未安装") from e
-        self._throttle()
-        try:
-            info = yf.Ticker(symbol).info or {}
+            info = self._get_info_cached(symbol)
         except Exception as e:
             _log.warning("yfinance %s profile 拉取失败: %s", symbol, e)
             return {}

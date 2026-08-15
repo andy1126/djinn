@@ -164,7 +164,8 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
 
     return EngineConfig(
         initial_cash=cfg.account.initial_cash,
-        currency=cfg.account.currency,
+        currency=cfg.account.currency
+        or "USD",  # E11:currency 已由 model_validator 解析,兜底 USD
         commission=comm,
         slippage=slippage,
         constraints=con,

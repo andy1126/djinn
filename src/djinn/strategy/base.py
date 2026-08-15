@@ -34,6 +34,15 @@ SCOPE_PER_SYMBOL = "per_symbol"  # 每个成分独立跑信号
 SCOPE_PORTFOLIO = "portfolio"  # 整体调仓,访问全标的数据
 
 
+def _overrides(cls: type, name: str) -> bool:
+    """沿 MRO 判断 ``name`` 是否被子类(自身或中间父类)覆写(相对 Strategy 基类)。"""
+    base = getattr(Strategy, name)
+    for klass in cls.__mro__:  # 含自身(直接覆写)与所有中间父类
+        if name in klass.__dict__ and klass.__dict__[name] is not base:
+            return True
+    return False
+
+
 class DataView:
     """多标的行情只读视图(防未来函数)。
 
@@ -44,15 +53,14 @@ class DataView:
     def __init__(self, datas: dict[str, MarketData], now: date) -> None:
         self._datas = datas
         self._now = pd.Timestamp(now)
-        self._cache: dict[str, pd.DataFrame] = {}
 
     def __getitem__(self, symbol: str) -> pd.DataFrame:
         if symbol not in self._datas:
             raise KeyError(f"无标的数据: {symbol}")
-        if symbol not in self._cache:
-            df = self._datas[symbol].df
-            self._cache[symbol] = df.loc[: self._now]
-        return self._cache[symbol]
+        df = self._datas[symbol].df
+        # D4:searchsorted 定位 <= now 的前缀,返回 iloc 视图(不再缓存全历史切片)
+        pos = df.index.searchsorted(self._now, side="right")
+        return df.iloc[:pos]
 
     def __contains__(self, symbol: str) -> bool:
         return symbol in self._datas
@@ -271,14 +279,10 @@ class Strategy(ABC):  # noqa: B024
         super().__init_subclass__(**kwargs)
         params = collect_params(cls)
         setattr(cls, _PARAM_ATTR, params)
-        # 子类必须实现 on_bar 或 signals 之一
-        has_on_bar = (
-            "on_bar" in cls.__dict__ and cls.__dict__["on_bar"] is not Strategy.on_bar
-        )
-        has_signals = (
-            "signals" in cls.__dict__
-            and cls.__dict__["signals"] is not Strategy.signals
-        )
+        # 子类必须实现 on_bar 或 signals 之一;沿 MRO 查找覆写
+        # (允许 ``class MyMAC(MACrossover): fast = param(5)`` 继承父类 signals)。
+        has_on_bar = _overrides(cls, "on_bar")
+        has_signals = _overrides(cls, "signals")
         if not has_on_bar and not has_signals:
             raise TypeError(f"策略 {cls.__name__} 必须实现 on_bar() 或 signals() 之一")
 

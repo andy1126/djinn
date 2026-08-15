@@ -12,15 +12,15 @@ from fastapi import (
     Depends,
     HTTPException,
     WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
 
 from djinn.api.deps import get_job_registry, get_registry
-from djinn.api.jobs import JobRecord, JobRegistry, make_title, run_backtest_job
+from djinn.api.jobs import JobRegistry, make_title, run_backtest_job
 from djinn.api.report_store import densify_payload, rebuild_report
 from djinn.api.report_store import load as load_report
 from djinn.api.schemas import BacktestRequest, JobCreated, JobStatus
+from djinn.api.ws import stream_job_progress
 from djinn.data.provider import ProviderRegistry
 from djinn.io import export_csv, export_excel
 
@@ -160,37 +160,5 @@ async def export_backtest(
 
 @router.websocket("/{job_id}/progress")
 async def backtest_progress_ws(websocket: WebSocket, job_id: str) -> None:
-    """WebSocket 推送回测进度。"""
-    await websocket.accept()
-    registry = get_job_registry()
-    # 先发送当前状态
-    job = registry.get(job_id)
-    if not job:
-        await websocket.close(code=4004, reason="任务不存在")
-        return
-    await websocket.send_json(job.to_dict())
-    if job.status in ("done", "error"):
-        await websocket.close()
-        return
-    # 订阅更新
-    queue: asyncio.Queue[JobRecord] = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def callback(updated_job: JobRecord) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, updated_job)
-
-    registry.subscribe(job_id, callback)
-    try:
-        while True:
-            try:
-                updated = await asyncio.wait_for(queue.get(), timeout=1.0)
-                await websocket.send_json(updated.to_dict())
-                if updated.status in ("done", "error"):
-                    break
-            except TimeoutError:
-                # 心跳
-                await websocket.send_json({"type": "heartbeat"})
-    except WebSocketDisconnect:
-        pass
-    finally:
-        registry.unsubscribe(job_id, callback)
+    """WebSocket 推送回测进度(旧端点,委托通用实现保留兼容)。"""
+    await stream_job_progress(websocket, get_job_registry(), job_id)

@@ -354,7 +354,11 @@ class _PineCodeGen:
             args = ", ".join(self._expr(a.value) for a in node.args)
             return f"{mapped}({args})"
         if ns == "nz":
-            x = self._expr(node.args[0].value)
+            arg = node.args[0].value
+            x = self._expr(arg)
+            # C13:标量字面量不可能为 NaN,nz 无操作直接返回(否则 ``0.fillna(...)`` 语法错误)
+            if isinstance(arg, Constant):
+                return x
             y = self._expr(node.args[1].value) if len(node.args) > 1 else "0"
             return f"{x}.fillna({y})"
         if ns == "strategy":

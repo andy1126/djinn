@@ -33,6 +33,18 @@ def _build_namespace() -> dict[str, Any]:
     ns["state_from_signals"] = state_from_signals
     for name in indicators.__all__:
         ns[name] = getattr(indicators, name)
+    # C13:Pine math.* 映射的标量函数须在命名空间可达(否则运行期 NameError)。
+    # abs/min/max/round 走 SAFE_BUILTINS 内建;此处补其余映射目标。
+    ns.update(
+        {
+            "sqrt": np.sqrt,
+            "log": np.log,
+            "exp": np.exp,
+            "sign": np.sign,
+            "pow": np.power,
+            "abs_": np.abs,
+        }
+    )
     # 用户自定义指标与内置指标同级注入
     ns.update(get_user_indicator_functions())
     return ns

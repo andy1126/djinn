@@ -27,6 +27,43 @@ def rank_turnover(factor: pd.DataFrame) -> float:
     return float(1.0 - ac.mean()) if len(ac) else 0.0
 
 
+# 调仓频率档位(交易日口径):half_life 落在区间内 → 推荐档。
+_HALF_LIFE_BUCKETS: tuple[tuple[int, str], ...] = (
+    (2, "daily"),
+    (8, "weekly"),
+    (15, "monthly"),
+)
+
+
+def _recommend_freq(decay: dict[int, float]) -> str | None:
+    """按 IC 衰减曲线推荐调仓频率(C11)。
+
+    规则:找 IC 衰减到峰值 50% 的最短持有期(仅看峰值之后的周期),映射到最近
+    调仓档(daily / weekly / monthly / quarterly)。无有效峰值 → None。
+    """
+    if not decay:
+        return None
+    peaks = {p: v for p, v in decay.items() if v is not None and math.isfinite(v)}
+    if not peaks:
+        return None
+    peak_period = max(peaks, key=lambda p: abs(peaks[p]))
+    peak_val = abs(peaks[peak_period])
+    if peak_val == 0:
+        return None
+    half = peak_val * 0.5
+    half_life: int | None = None
+    for p in sorted(peaks):
+        if p >= peak_period and abs(peaks[p]) <= half:
+            half_life = p
+            break
+    if half_life is None:
+        return "quarterly"  # 全程未衰减到一半 → 长期有效
+    for bound, freq in _HALF_LIFE_BUCKETS:
+        if half_life <= bound:
+            return freq
+    return "quarterly"
+
+
 @dataclass
 class FactorReport:
     """单因子分析报告的聚合结果。"""
@@ -41,6 +78,7 @@ class FactorReport:
     monotonicity: float
     turnover: float
     ic_by_group: pd.Series = field(default_factory=pd.Series)
+    recommended_rebalance: str | None = None
 
     # ── 序列化(与 BacktestReport 的 {index,values}/{index,columns,data} 约定一致)──
     @staticmethod
@@ -73,6 +111,7 @@ class FactorReport:
             "monotonicity": _finite(self.monotonicity),
             "turnover": _finite(self.turnover),
             "ic_by_group": self._series(self.ic_by_group),
+            "recommended_rebalance": self.recommended_rebalance,
         }
 
 
@@ -89,16 +128,19 @@ def analyze_factor(
     primary = min(fwd_returns) if fwd_returns else 1
     ic = compute_ic(factor, fwd_returns[primary], method=ic_method)  # type: ignore[arg-type]
     qret = quantile_returns(factor, fwd_returns[primary], n_quantiles)
+    decay = ic_decay(factor, fwd_returns, method=ic_method)  # type: ignore[arg-type]
+    decay_means = {p: float(s.mean()) for p, s in decay.items() if len(s)}
     return FactorReport(
         factor_name=name,
         ic=ic,
         ic_summary=ic_summary(ic),
-        ic_decay=ic_decay(factor, fwd_returns, method=ic_method),  # type: ignore[arg-type]
+        ic_decay=decay,
         quantile_returns=qret,
         quantile_cumulative=quantile_cumulative(qret),
         long_short=long_short_curve(qret),
         monotonicity=monotonicity_score(qret),
         turnover=rank_turnover(factor),
+        recommended_rebalance=_recommend_freq(decay_means),
         ic_by_group=(
             ic_by_group(factor, fwd_returns[primary], industry_map, method=ic_method)  # type: ignore[arg-type]
             if industry_map

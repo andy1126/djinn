@@ -136,6 +136,12 @@ class EventDrivenEngine:
         # 对齐所有标的的交易日索引(intersection 取交集;union 取并集/以基准日历为主)
         trading_index = self._aligned_index(data, benchmark)
 
+        # D8:预计算每个标的 ts→iloc 映射,主循环 _bars_at 用 O(1) 查表 + iloc 取行,
+        # 取代每 ts 每 symbol 的 ``ts in index`` + ``.loc[ts]`` 双重查找。
+        pos_maps: dict[str, dict[pd.Timestamp, int]] = {
+            s: {t: i for i, t in enumerate(md.df.index)} for s, md in data.items()
+        }
+
         # D1:signals-only 策略预计算全量信号(无状态纯函数,滚动类指标 t 日值只依赖 ≤t)。
         # 预计算后主循环每日 O(1) asof 查表,替代 O(T) 全历史重算。
         presignals: dict[str, pd.Series] = {}
@@ -182,7 +188,7 @@ class EventDrivenEngine:
             if should_stop is not None and should_stop():
                 raise BacktestCancelled(f"回测已取消 @{ts.date()}")
             ts_date = ts.date()
-            bars = self._bars_at(data, ts)
+            bars = self._bars_at(data, ts, pos_maps)
             prices = {s: b.close for s, b in bars.items() if b is not None}
             # 前向填充估值价:当日无行情的持仓标的用最近可得价(prev_close)估值,
             # 否则持仓市值会归零、破坏 Account 资金守恒不变式(union 日历下尤其重要)。
@@ -402,12 +408,18 @@ class EventDrivenEngine:
             raise ValueError("标的交易日无交集,无法对齐")
         return pd.DatetimeIndex(idx.sort_values())
 
-    def _bars_at(self, data: dict[str, MarketData], ts: pd.Timestamp) -> dict[str, Any]:
-        """取各标的在 ts 的 Bar(无该日返回 None)。"""
+    def _bars_at(
+        self,
+        data: dict[str, MarketData],
+        ts: pd.Timestamp,
+        pos_maps: dict[str, dict[pd.Timestamp, int]],
+    ) -> dict[str, Any]:
+        """取各标的在 ts 的 Bar(无该日返回 None)。
+
+        D8:查预计算的 ts→iloc 映射(O(1))后用 iloc 取行,替代双重索引查找。
+        """
         out: dict[str, Any] = {}
         for sym, md in data.items():
-            if ts in md.df.index:
-                out[sym] = md.bar_at(ts.date())
-            else:
-                out[sym] = None
+            pos = pos_maps[sym].get(ts)
+            out[sym] = md.bar_at_index(pos) if pos is not None else None
         return out

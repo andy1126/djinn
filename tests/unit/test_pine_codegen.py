@@ -129,3 +129,51 @@ def test_no_signals_raises():
         raise AssertionError("should require strategy.entry/close")
     except StrategyError:
         pass
+
+
+def test_pine_math_funcs_run():
+    """C13:math.sqrt/log/exp/sign 等映射在命名空间可达,运行不 NameError。"""
+    pine = """
+//@version=5
+strategy("M")
+src = ta.sma(close, 20)
+r = math.sqrt(close)
+l = math.log(close)
+e = math.exp(0.01)
+s = math.sign(close - src)
+cond = ta.crossover(r, ta.sma(close, 30))
+if (cond)
+    strategy.entry("L", strategy.long)
+"""
+    py = pine_to_python(pine)
+    cls = compile_user_strategy("M", py, "python")
+    sig = cls().signals(_ohlcv())  # 不抛 NameError 即通过
+    assert set(sig.unique()).issubset({-1, 0, 1})
+
+
+def test_nz_scalar_no_op():
+    """C13:nz(0) 标量不生成 0.fillna(...)。"""
+    pine = """
+//@version=5
+strategy("X")
+a = nz(0)
+cond = ta.crossover(ta.sma(close, 10), ta.sma(close, 20)) or (a == 0)
+if (cond)
+    strategy.entry("L", strategy.long)
+"""
+    py = pine_to_python(pine)
+    assert "0.fillna" not in py
+    compile_user_strategy("X", py, "python")
+
+
+def test_math_map_targets_reachable():
+    """C13 元测试:_MATH_MAP 每个映射目标在命名空间可达。"""
+    from djinn.strategy.pine import _MATH_MAP
+    from djinn.strategy.user import _build_namespace
+
+    ns = _build_namespace()
+    builtins = ns.get("__builtins__", {})
+    for target in _MATH_MAP.values():
+        assert (
+            target in ns or target in builtins
+        ), f"math.* 映射目标 {target!r} 在命名空间不可达"

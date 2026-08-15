@@ -15,7 +15,10 @@ import pandas as pd
 from djinn import indicators
 from djinn.indicators.store import get_indicator_store
 from djinn.utils.exceptions import StrategyError
+from djinn.utils.logging import get_logger
 from djinn.utils.sandbox import SAFE_BUILTINS, validate_source
+
+_log = get_logger(__name__)
 
 
 def _indicator_namespace() -> dict[str, Any]:
@@ -57,11 +60,13 @@ def get_user_indicator_functions() -> dict[str, Callable[..., Any]]:
         return {}
     ns = _indicator_namespace()
     for rec in records:
-        tree = validate_source(rec.source_code)
         try:
+            tree = validate_source(rec.source_code)
             exec(compile(tree, f"<user_indicator:{rec.name}>", "exec"), ns)
         except Exception as e:
-            raise StrategyError(f"编译指标 {rec.name!r} 失败: {e}") from e
+            # C12:单个坏指标不砖掉全部用户策略,跳过并告警
+            _log.warning("用户指标 %s 编译失败,已跳过: %s", rec.name, e)
+            continue
     out: dict[str, Callable[..., Any]] = {}
     for rec in records:
         func = ns.get(rec.name)

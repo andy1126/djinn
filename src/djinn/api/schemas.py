@@ -50,11 +50,10 @@ class JobCreated(BaseModel):
 class JobStatus(BaseModel):
     job_id: str
     title: str = ""
-    status: str  # pending / running / done / error
+    status: str  # pending / running / done / error / cancelled
     progress: float = 0.0
     stage: str = ""
     error: str | None = None
-    result_path: str | None = None
     result: dict[str, Any] | None = None
     kind: str = ""
 

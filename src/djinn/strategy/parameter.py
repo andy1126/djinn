@@ -29,8 +29,33 @@ class Parameter:
     max: float | int | None = None
     choices: tuple[Any, ...] | None = None
     description: str | None = None
+    name: str = ""  # 由 collect_params 回填(供错误消息定位)
 
     def validate(self, value: Any) -> Any:
+        # C12:min/max 比较前先做类型检查(消除裸 TypeError / 静默类型错误)
+        if self.default is not None and value is not None:
+            if not isinstance(value, type(self.default)):
+                default_type = type(self.default)
+                # int 值可安全用于 float 参数(整数是合法浮点)
+                if (
+                    default_type is float
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                ):
+                    value = float(value)
+                # int 参数接受 float 整值自动转 int(bool 是 int 子类,特判)
+                elif (
+                    default_type is int
+                    and not isinstance(self.default, bool)
+                    and isinstance(value, float)
+                    and value.is_integer()
+                ):
+                    value = int(value)
+                else:
+                    raise ParameterError(
+                        f"参数 {self.name!r} 类型不符: 期望 "
+                        f"{default_type.__name__},实际 {type(value).__name__}"
+                    )
         if self.choices is not None and value not in self.choices:
             raise ParameterError(f"参数取值 {value!r} 不在可选范围 {self.choices}")
         if self.min is not None and value < self.min:
@@ -90,6 +115,8 @@ def collect_params(cls: type) -> dict[str, Parameter]:
             if isinstance(v, _ParamDescriptor):
                 if not v.name:
                     v.name = k
+                # 回填 Parameter.name(冻结 dataclass,用 object.__setattr__ 绕开)
+                object.__setattr__(v.parameter, "name", k)
                 params[k] = v.parameter
     return params
 
@@ -110,6 +137,7 @@ class ParamSchema:
     max: float | int | None = None
     choices: list[Any] | None = None
     description: str | None = None
+    required: bool = False  # default=None 的参数必填
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -120,6 +148,7 @@ class ParamSchema:
             "max": self.max,
             "choices": self.choices,
             "description": self.description,
+            "required": self.required,
         }
         return d
 
@@ -139,6 +168,7 @@ def param_schema(cls: type) -> list[ParamSchema]:
                 max=p.max,
                 choices=list(p.choices) if p.choices else None,
                 description=p.description,
+                required=p.default is None,
             )
         )
     return out

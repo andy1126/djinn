@@ -7,10 +7,12 @@ env 覆盖规则:``DJINN_<SECTION>_<FIELD>`` 覆盖对应字段(优先级 env > 
 from __future__ import annotations
 
 import os
+import types
 from pathlib import Path
-from typing import Any
+from typing import Any, Union, get_args, get_origin
 
 import yaml
+from pydantic import BaseModel
 
 from djinn.config.models import BacktestConfig
 from djinn.utils.exceptions import ConfigError
@@ -40,6 +42,34 @@ def _coerce(value: str) -> str | int | float | bool | None:
     except ValueError:
         pass
     return s
+
+
+def _unwrap_optional(ann: Any) -> Any:
+    """剥掉 ``Optional[X]`` / ``X | None`` 的外层。"""
+    origin = get_origin(ann)
+    if origin in (types.UnionType, Union):
+        args = [a for a in get_args(ann) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+        return args[0] if args else ann
+    return ann
+
+
+def _leaf_is_list(path: list[str]) -> bool:
+    """沿 BacktestConfig 模型树判断 env 路径叶字段是否为 ``list[...]``。"""
+    model: Any = BacktestConfig
+    for i, seg in enumerate(path):
+        field = model.model_fields.get(seg)
+        if field is None:
+            return False
+        ann = _unwrap_optional(field.annotation)
+        if i == len(path) - 1:
+            return get_origin(ann) is list
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            model = ann
+        else:
+            return False
+    return False
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +124,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(cur.get(p), dict):
                 cur[p] = {}
             cur = cur[p]
-        cur[resolved[-1]] = _coerce(val)
+        value: Any = _coerce(val)
+        # E11:list 字段按逗号切分(如 DJINN_UNIVERSE_SYMBOLS="AAPL,MSFT")
+        if _leaf_is_list(resolved) and isinstance(value, str):
+            value = [x.strip() for x in value.split(",") if x.strip()]
+        cur[resolved[-1]] = value
     return out
 
 
@@ -123,9 +157,13 @@ def load_config(
     else:
         raw = dict(data)
     raw = _apply_env_overrides(raw)
-    # 过滤顶层非法字段(如 log 来自 djinn 通用环境变量)
+    # E11:未知顶层键 fail-fast(取代静默丢弃)
     known_field_names = set(BacktestConfig.model_fields.keys())
-    raw = {k: v for k, v in raw.items() if k in known_field_names}
+    unknown = sorted(set(raw) - known_field_names)
+    if unknown:
+        raise ConfigError(
+            f"未知顶层配置键: {unknown};允许: {sorted(known_field_names)}"
+        )
     try:
         return BacktestConfig.model_validate(raw)
     except Exception as e:

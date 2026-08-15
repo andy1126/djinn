@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
+import pandas as pd
 
 from djinn.factor.base import Factor, Panel, PanelDict, param
 
@@ -22,18 +25,27 @@ class VolatilityFactor(Factor):
 
 
 class BetaFactor(Factor):
-    """N 日 beta(对截面等权"市场"收益)。"""
+    """N 日 beta(对基准日收益;无基准时退化为截面等权市场代理)。"""
 
     name = "beta"
     category = "volatility"
     period = param(60, min=20, max=250, description="beta 回看窗口(交易日)")
+    benchmark = param(
+        None,
+        description="基准代码(如 000300.SH / ^GSPC);None 时沿用截面等权代理",
+    )
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
         p = int(self.period)
         ret = prices.pct_change()
-        market = ret.mean(axis=1)  # 等权市场代理
+        # C6:优先用真实基准日收益(引擎经 ohlcv["__benchmark__"] 注入);否则等权代理
+        bench = cast(pd.Series | None, ohlcv.get("__benchmark__"))
+        if bench is not None and len(bench):
+            market = bench.reindex(ret.index).ffill()
+        else:
+            market = ret.mean(axis=1)  # 等权市场代理
         cov = ret.rolling(p).cov(market)
         var = market.rolling(p).var()
         return cov.div(var.where(var != 0), axis=0)

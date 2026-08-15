@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from djinn.portfolio.account import Account, Fill
+from djinn.portfolio.account import Account, LedgerEntry
 from djinn.portfolio.allocation import (
     Allocation,
     AllocationType,
@@ -27,7 +27,7 @@ __all__ = [
     "AllocationType",
     "CustomWeight",
     "EqualWeight",
-    "Fill",
+    "LedgerEntry",
     "MarketCapWeight",
     "MeanVarianceWeight",
     "MinVarianceWeight",
