@@ -251,12 +251,13 @@ def supertrend(
     high: pd.Series,
     low: pd.Series,
     close: pd.Series,
-    factor: float = 3.0,
+    factor: float | pd.Series = 3.0,
     atr_period: int | float = 10,
 ) -> pd.DataFrame:
     """超级趋势,返回 ``{supertrend, direction}``(direction=+1 多头 / -1 空头)。
 
     下轨做多止损、上轨做空止损,逐根递推(无闭式,首 ``atr_period`` 根为 NaN)。
+    ``factor`` 可为标量或逐根 Series(自适应因子)。
     """
     atr_period = _n(atr_period)
     hl2 = (high + low) / 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from djinn.indicators import rsi
 from djinn.strategy.base import Strategy
+from djinn.strategy.library.adaptive_trend_trail import AdaptiveTrendTrail
 from djinn.strategy.library.bollinger_reversion import BollingerReversion
 from djinn.strategy.library.buy_and_hold import BuyAndHold
 from djinn.strategy.library.cross_sectional_momentum import CrossSectionalMomentum
@@ -17,6 +18,7 @@ from djinn.strategy.library.macd_crossover import MACDCrossover
 from djinn.strategy.library.momentum import Momentum
 from djinn.strategy.library.pairs import PairsSpread
 from djinn.strategy.library.rsi_reversal import RSIReversal
+from djinn.strategy.library.signal_strategy import SignalStrategy
 from djinn.strategy.library.stochastic import StochasticCross
 from djinn.strategy.library.supertrend import Supertrend
 from djinn.strategy.library.turtle_atr import TurtleATR
@@ -26,6 +28,7 @@ from djinn.strategy.user import compile_user_strategy
 
 # 策略名 → 类的注册表(供 CLI / 配置按名实例化)。
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
+    "AdaptiveTrendTrail": AdaptiveTrendTrail,
     "MACrossover": MACrossover,
     "RSIReversal": RSIReversal,
     "Momentum": Momentum,
@@ -33,6 +36,7 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "MACDCrossover": MACDCrossover,
     "BollingerReversion": BollingerReversion,
     "Supertrend": Supertrend,
+    "SignalStrategy": SignalStrategy,
     "StochasticCross": StochasticCross,
     "BuyAndHold": BuyAndHold,
     "CrossSectionalMomentum": CrossSectionalMomentum,
@@ -61,6 +65,7 @@ def get_strategy_class(name: str, store: StrategyStore | None = None) -> type[St
 
 
 __all__ = [
+    "AdaptiveTrendTrail",
     "DCA",
     "STRATEGY_REGISTRY",
     "BollingerReversion",
@@ -75,6 +80,7 @@ __all__ = [
     "Momentum",
     "PairsSpread",
     "RSIReversal",
+    "SignalStrategy",
     "StochasticCross",
     "Supertrend",
     "TurtleATR",
