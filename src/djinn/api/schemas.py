@@ -30,6 +30,19 @@ class SweepRequest(BaseModel):
     parallel: bool = True
 
 
+class WalkForwardRequest(BaseModel):
+    """Walk-Forward 分析请求(窗口几何在 ``config.walk_forward`` 段)。"""
+
+    config: BacktestConfig
+    grid: dict[str, list[Any]] | None = Field(
+        default=None, description="参数网格覆盖(缺省用 config.walk_forward.grid)"
+    )
+    target: str | None = Field(
+        default=None, description="IS 优化目标覆盖(缺省用 config.walk_forward.target)"
+    )
+    parallel: bool = True
+
+
 class DataFetchRequest(BaseModel):
     """数据拉取请求。"""
 

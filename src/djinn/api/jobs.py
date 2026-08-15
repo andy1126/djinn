@@ -52,6 +52,13 @@ def make_title(config: dict[str, Any], *, kind: str, target: str | None = None) 
     base = f"{strat} · {sym_str} · {start}~{end}"
     if kind == "sweep":
         return f"参数扫描 {base} · 目标={target or 'sharpe'}"
+    if kind == "walk-forward":
+        wf = config.get("walk_forward") or {}
+        return (
+            f"Walk-Forward {base} · "
+            f"is={wf.get('is_days', '?')}/oos={wf.get('oos_days', '?')} · "
+            f"目标={target or 'sharpe'}"
+        )
     return base
 
 
@@ -498,6 +505,70 @@ def run_sweep_job(
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
 
 
+def run_walk_forward_job(
+    registry: JobRegistry,
+    job_id: str,
+    csv_dir: str | None = None,
+    provider_registry: ProviderRegistry | None = None,
+) -> None:
+    """在后台线程执行 walk-forward 分析(逐窗口 IS 独立选参 + OOS 评估)。
+
+    依赖 ``__meta__`` 约定:首行从 ``result["__meta__"]`` 重建 config/grid/target,
+    故孤儿恢复只需 ``(registry, job_id)``。完成结果保留 ``__meta__``。
+    """
+    from djinn.cli.walk_forward import walk_forward
+    from djinn.config import load_config
+    from djinn.data import DataCache, default_registry
+
+    job = registry.get(job_id)
+    meta = (job.result or {}).get("__meta__", {}) if job and job.result else {}
+    config_dict = meta.get("config", {})
+    grid = meta.get("grid") or None
+    target = meta.get("target") or None
+    parallel = bool(meta.get("parallel", False))
+
+    log = get_logger(__name__)
+    try:
+        registry.update(job_id, status="running", progress=0.05, stage="加载配置")
+        cfg = load_config(data=config_dict)
+        # 注入的 provider_registry 优先(测试 / API 复用单例缓存);否则自建。
+        if provider_registry is not None:
+            registry_obj = provider_registry
+        else:
+            registry_obj = default_registry(csv_dir=csv_dir, cache=DataCache())
+
+        def _progress(done: int, total: int) -> None:
+            registry.update(
+                job_id,
+                progress=0.1 + 0.85 * done / max(1, total),
+                stage=f"窗口 {done}/{total}",
+            )
+
+        report = walk_forward(
+            cfg,
+            registry=registry_obj,
+            grid=grid,
+            target=target,
+            parallel=parallel,
+            on_progress=_progress,
+            should_stop=lambda: registry.is_cancel_requested(job_id),
+        )
+        registry.update(
+            job_id,
+            status="done",
+            progress=1.0,
+            stage="完成",
+            result={"__meta__": meta, "report": report.to_dict()},
+        )
+        registry.clear_cancel(job_id)
+    except BacktestCancelled:
+        log.info("walk-forward 任务 %s 已取消", job_id)
+        registry.update(job_id, status="cancelled", stage="已取消")
+    except Exception as e:
+        log.exception("walk-forward 任务 %s 失败", job_id)
+        registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
 # ── 横截面 alpha 任务(因子分析 / 选股)────────────────────
 def _json_scalar(v: Any) -> Any:
     """标量 JSON 友好化:numpy 标量 → python,NaN/Inf → None。"""
@@ -889,6 +960,7 @@ def run_screen_job(
 _RUNNERS: dict[str, Callable[..., None]] = {
     "backtest": run_backtest_job,
     "sweep": run_sweep_job,
+    "walk-forward": run_walk_forward_job,
     "factor-analysis": run_factor_analysis_job,
     "factor-matrix": run_factor_matrix_job,
     "screen": run_screen_job,

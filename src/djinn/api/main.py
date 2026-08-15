@@ -25,6 +25,7 @@ from djinn.api.routers import (
     strategies,
     sweeps,
     universe,
+    walk_forwards,
 )
 from djinn.data import default_registry
 from djinn.utils.logging import get_logger
@@ -138,6 +139,7 @@ app.include_router(strategies.router)
 app.include_router(data.router)
 app.include_router(backtests.router)
 app.include_router(sweeps.router)
+app.include_router(walk_forwards.router)
 app.include_router(universe.router)
 app.include_router(factors.router)
 app.include_router(factors.analysis_router)
