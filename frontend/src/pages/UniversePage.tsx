@@ -224,7 +224,7 @@ export default function UniversePage() {
     const t = searchParams.get('tab')
     return t === 'index' || t === 'profile' ? t : 'search'
   })
-  const [market, setMarket] = useState<string>('US')
+  const [market, setMarket] = useState<string>('CN')
   const [query, setQuery] = useState('')
   // F11:搜索防抖(输入 300ms 后触发请求,快速输入不逐字打网络)
   const debouncedQuery = useDebouncedValue(query, 300)

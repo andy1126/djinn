@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import threading
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -97,6 +97,23 @@ def _sina_symbol(code: str) -> str:
     if code.startswith(("43", "83", "87", "88")):
         return f"bj{code}"
     return f"sz{code}"
+
+
+def _normalize_name(s: str) -> str:
+    """新浪名称清洗:全角→半角(``Ａ``→``A``)、去空白(``万  科Ａ``→``万科A``)。
+
+    新浪 ``stock_info_a_code_name`` 的名称带全角字母与内部空格,直接子串匹配
+    会漏搜(如搜「万科」匹配不到「万  科Ａ」)。
+    """
+    out: list[str] = []
+    for ch in s:
+        code = ord(ch)
+        if 0xFF01 <= code <= 0xFF5E:  # 全角 ASCII 区 → 半角
+            ch = chr(code - 0xFEE0)
+        elif ch.isspace():
+            continue  # 去掉内部空白(含全角空格)
+        out.append(ch)
+    return "".join(out)
 
 
 class AkShareProvider(DataProvider):
@@ -289,7 +306,7 @@ class AkShareProvider(DataProvider):
         if raw is None or len(raw) == 0:
             raise DataError("akshare 全 A 股代码名称返回空")
         symbols = [normalize_cn_symbol(str(c)) for c in raw["code"].tolist()]
-        names = [str(n).strip() for n in raw["name"].tolist()]
+        names = [_normalize_name(str(n)) for n in raw["name"].tolist()]
         out = pd.DataFrame({"name": names}, index=pd.Index(symbols, name="symbol"))
         out["market"] = Market.CN.value
         self.cache.put_universe(self.name, "code_name_sina", out)
@@ -652,7 +669,7 @@ class AkShareProvider(DataProvider):
         """按代码 / 名称子串匹配 A 股(全 A 股快照),返回 ``(symbol, name)``。"""
         if market is not None and market is not Market.CN:
             return []
-        q = query.strip().upper()
+        q = _normalize_name(query).upper()
         if not q:
             return []
         df = self._code_name_df()
@@ -674,11 +691,29 @@ class AkShareProvider(DataProvider):
     def get_stock_price(self, symbol: str, market: Market | None = None) -> float:
         if market is not None and market is not Market.CN:
             raise NotImplementedError("akshare 仅支持 A 股价格")
-        df = self._spot_df()
-        if symbol not in df.index or "price" not in df.columns:
+        # 新浪日线最新收盘价(东财 _spot_df 不可达;新浪日线覆盖全板含科创/创业)
+        code = _normalize_ak_code(symbol)
+        try:
+            import akshare as ak
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
+        self._throttle()
+        end = date.today()
+        start = end - timedelta(days=30)
+        try:
+            raw = ak.stock_zh_a_daily(
+                symbol=_sina_symbol(code),
+                start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"),
+                adjust="",
+            )
+        except Exception as e:
+            raise DataError(f"akshare 拉取 {symbol} 价格失败: {e}") from e
+        if raw is None or len(raw) == 0:
             raise DataError(f"akshare 无 {symbol} 价格")
-        raw = df.loc[symbol, "price"]
-        f = float(pd.to_numeric(raw, errors="coerce"))
+        f = float(pd.to_numeric(raw["close"].iloc[-1], errors="coerce"))
         if not math.isfinite(f):
             raise DataError(f"akshare {symbol} 价格非法")
         return f
