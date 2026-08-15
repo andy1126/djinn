@@ -1,0 +1,68 @@
+# Djinn 因子组合策略示例 — FactorPortfolio + 选股流水线增强 + 两层择时(G 计划)
+# 用法:djinn run -c configs/factor_portfolio.example.yaml
+#
+# 流水线:
+#   因子面板 → 截面打分(weighting=static 手填权重 / icir 滚动 ICIR 自动加权)
+#     → G1 资格过滤(流动性/次新/ST/停牌)
+#     → G2 行业中性 TopK(industry_neutral)
+#     → G4 换手惩罚(min_score_diff)
+#     → G3 权重分配(allocation + max_sector_weight 行业上限)
+#   ── 调仓日执行以上;每日叠加 G5~G7 择时层(timing)──
+#     → 市场闸门(指数 SMA200 → 仓位上限)
+#     → 池内出场(SMA20 跌破 / ATR 吊灯)
+#     → 入场确认(站上 SMA20 + 冷却期)
+
+universe:
+  index: CSI300
+  benchmark: "000300.SH"
+  market: CN
+
+period:
+  start: "2021-01-01"
+  end: "2024-12-31"
+
+account:
+  initial_cash: 10000000
+  currency: CNY
+
+adjust: backward
+
+costs:
+  commission:
+    type: china
+  slippage:
+    type: fixed_bps
+    bps: 5
+
+strategy:
+  name: FactorPortfolio
+  factor_weights: {momentum: 1.0, ep: 0.5, roe: 0.5}
+  n_stocks: 20
+  rebalance_freq: 20
+  selection:
+    min_amount: 50000000        # 20 日平均成交额 ≥ 5000 万
+    min_list_days: 120
+    exclude_st: true
+    industry_neutral: true
+    max_sector_weight: 0.3
+    min_score_diff: 0.5
+  timing:
+    market_filter: {type: sma, window: 200, floor: 0.3}
+    exit_rule: {type: sma_break, window: 20}
+    entry_confirm: {type: above_sma, window: 20}
+    cooldown_days: 5
+
+portfolio:
+  mode: portfolio
+  allocation: equal
+
+risk:
+  max_single_weight: 0.2
+  max_total_position: 0.95
+
+output:
+  dir: "./results/factor_portfolio"
+  export: ["csv", "excel"]
+  report: none
+
+risk_free_rate: 0.02

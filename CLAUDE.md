@@ -51,6 +51,8 @@ Data(数据提供器 + 缓存 + 基本面/universe) → Factor(因子引擎/分�
 - **因子分析**(`analytics/factor_analysis.py`):`analyze_factor(factor, fwd_returns, ...) -> FactorReport`(`IC_mean/icir/ic_pos_ratio`、分层、衰减);`compute_forward_returns(prices, periods)`。IC 用 `pandas.corr(method='spearman')`,无需 scipy。
 - **多因子诊断**(`factor/analysis/matrix.py`):`analyze_factor_matrix(factors: dict[str, DataFrame], prices, periods, ic_method) -> FactorMatrixReport`(相关矩阵 px×px 逐日截面相关跨日均值 + 每因子各期 `ic_summary` + `rank_turnover` 换手)。诊断"因子是否冗余"(ep/sp/bp 常 >0.8),**不是 IC 矩阵**——IC 是"因子 vs 前向收益",两因子间无此概念。配 `/factor-matrix` 端点 + 前端 `FactorMatrixPage`(热力图 `MatrixHeatmap` + IC 汇总表)。
 - **选股策略**(`strategy/library/factor_portfolio.py`):多因子打分(`FactorScore(factor, weight)`,负权重 = 越低越好)→ TopN 组合。`FactorPortfolioStrategy` 自行再平衡(走 `SCOPE_PORTFOLIO`),所需 `scores`/`cov` 由策略在调仓时传给 `Allocation`(score/risk_parity/min_variance/mean_variance 不再依赖引擎注入)。
+  - **两层择时**(`strategy/library/factor_timing.py` 的 `FactorTiming`,继承 `FactorPortfolioStrategy`):调仓频因子选池 + 日频择时覆盖(市场闸门 / 个股出场 / 入场确认),规则库在 `strategy/timing.py`。配置经 `strategy.selection` / `strategy.timing`(`config/models.py`),`cli/runner.py` 的 `build_strategy()` 按 timing 是否存在选类。`Context.benchmark_close()` 提供基准通道(引擎把 benchmark 注入 ctx,G6)。
+  - **ICIR 加权**:`strategy.weighting="icir"`(默认 static)用滚动 ICIR 自动加权(因子负向自动取负权);IC 序列右移 holding_period 防未来函数(`factor/composite.py`)。
 - **截面选股**(`src/djinn/screen/`):`Screener.apply(conditions, fundamentals_df)` 条件过滤 + `FactorScore` 打分 + `top_n`,供 `/screens` 端点与选股策略共用。
 - **归因**(`src/djinn/analytics/attribution.py`):`brinson_attribution(weights, bench, returns, industry_map) -> BrinsonResult`(三效应恒等式 = 超额收益,等权篮子作基准);`factor_attribution` / `build_exposure_report`(因子暴露 + 行业分布)。
 - **归因接线**(`cli/runner.py`):`run_backtest(..., with_attribution=True?)` → `_attach_attribution` 填充 `report.attribution` / `report.factor_exposure`。CLI 默认关闭(避免行业映射网络开销),Web 报告端点(`/backtests/{id}/report`)显式开启。
@@ -73,7 +75,7 @@ Data(数据提供器 + 缓存 + 基本面/universe) → Factor(因子引擎/分�
 - Dispatcher:`get_job_registry` / `get_cache` 用 `lru_cache` 单例;`get_registry(cache=Depends(get_cache))` 注入 `ProviderRegistry`(universe/factor/screen 端点用)。测试用 `app.dependency_overrides[...]` 注入独立 `JobRegistry` + stub `ProviderRegistry`(见 `tests/unit/test_api.py` / `test_api_alpha.py`)。
 - **路由**(`api/routers/`):`backtests` / `data` / `strategies` / `sweeps` + alpha `universe` / `factors` / `factor-analysis` / `factor-matrix` / `screens`。后台任务执行器在 `api/jobs.py`:`run_backtest_job` / `run_sweep_job` / `run_factor_analysis_job` / `run_factor_matrix_job` / `run_screen_job`(共享 `_index_components` / `_resolve_universe` / `_industry_map` / `_build_fundamental_panels`)——**全部保留 `__meta__`**。
 - **回测报告缓存**(`api/report_store.py`):`run_backtest_job` 跑完即 `save(job_id, serialize_report(report))` 落盘 `.cache/djinn_results/{job_id}.json`;`/backtests/{id}/report` 与 `/export` **先读缓存**,无缓存才回退重跑 `run_backtest(cfg, registry=provider_registry, with_attribution=True)` 并落盘。`serialize_report` / `rebuild_report` 是一对对称序列化(metrics/trade_stats 等经 `_DictLike` 暴露 `to_dict()`,trades/rejections 用 `_Plain` 供 `export_csv` 按 getattr 读)——`/export` 复用 `export_csv/excel` 无需改写。`create_backtest` / `/report` / `/export` 都注入 `provider_registry = Depends(get_registry)` 并一路传给 job / 回退重跑(否则测试 stub 不生效、会触网)。
-- **sweep 多轴**(`cli/sweep.py`):`_run_one` 经 `_apply_param` 写轴——`universe.index`(同时重解析成分股)/ `strategy.factor_weights` / `portfolio.allocation` / `strategy.n_stocks` / `strategy.rebalance_freq`,其余裸 key 兜底进 `strategy.params`。白名单 `ALLOWED_SWEEP_AXES`(前后端共享,前端硬编码同表);路由 `create_sweep` 拦明显非法的 `<prefix>.<x>` key(400 + 允许列表,裸策略参数放行)。`run_sweep_job` 预拉 `universe.symbols ∪ 所有扫到的 index 成分`,返回每组合 `config_summary` + `sharpe/sortino/calmar`。排序:`REVERSE_MIN_TARGETS = {volatility, annual_volatility}` 升序,其余降序——**`max_drawdown` 存为 ≤0 负值,值越大(越接近 0)越好,走默认降序**,误放升序会把最深回撤排到最前。
+- **sweep 多轴**(`cli/sweep.py`):`_run_one` 经 `_apply_param` 写轴——`universe.index`(同时重解析成分股)/ `strategy.factor_weights` / `strategy.weighting`(static/icir)/ `portfolio.allocation` / `strategy.n_stocks` / `strategy.rebalance_freq`,其余裸 key 兜底进 `strategy.params`。白名单 `ALLOWED_SWEEP_AXES`(前后端共享,前端硬编码同表);路由 `create_sweep` 拦明显非法的 `<prefix>.<x>` key(400 + 允许列表,裸策略参数放行)。`run_sweep_job` 预拉 `universe.symbols ∪ 所有扫到的 index 成分`,返回每组合 `config_summary` + `sharpe/sortino/calmar`。排序:`REVERSE_MIN_TARGETS = {volatility, annual_volatility}` 升序,其余降序——**`max_drawdown` 存为 ≤0 负值,值越大(越接近 0)越好,走默认降序**,误放升序会把最深回撤排到最前。
 - **归因报告序列化**:`Report.attribution` / `factor_exposure` 是 `dict[str, Any] | None`;`/backtests/{id}/report` 重新跑 `run_backtest(cfg, with_attribution=True)` 生成。Series→`{"index":[str],"values":[float]}`,DataFrame→`{"index":[str],"columns":[str],"data":[[float]]}`;NaN/Inf 在 `_sanitize` / `_safe_float` 转成 None(JSON 不接受 NaN/Inf)。
 - `export_backtest` 返回 `dict | FileResponse` 时**必须** `response_model=None` 装饰参数(FastAPI 不支持 Union 作 response_model)。
 
@@ -104,7 +106,7 @@ mypy --strict src/djinn
 pytest -n auto                          # 全部
 pytest tests/unit/test_api.py -v        # 单文件
 pytest tests/unit/test_config.py::test_load_example_yaml -v  # 单测
-python -m uvicorn djinn.api.main:app --host 0.0.0.0 --port 8000 --reload  # 启 API(开发热重载)
+python -m uvicorn djinn.api.main:app --host 127.0.0.1 --port 8000 --reload  # 启 API(开发热重载;E8 默认仅本机,需局域网访问显式 --host 0.0.0.0)
 
 # 前端
 cd frontend && npm install
