@@ -65,6 +65,9 @@ Data(数据提供器 + 缓存 + 基本面/universe) → Factor(因子引擎/分�
 `config/loader.py` 的 `load_config()`:YAML 加载 → `_apply_env_overrides()` 应用 `DJINN_<SECTION>_<FIELD>` env 覆盖(env > yaml > 默认)→ 过滤未知顶层字段 → `model_validate`。
 慢复权支持 `forward/backward/none`,默认 **backward**(保证净值连续)。
 
+- **Walk-Forward 分析**(`walk_forward` 段 + `cli/walk_forward.py`,H 计划):`period` 为全区间,窗口在期内滚动。每窗口 **样本内(IS)** 复用 sweep 网格独立选参(带暖机),**样本外(OOS)** 用该窗口 IS 最优参数评估,**所有 OOS 段按段首净值归一化拼接**成无前视样本外净值。`min_is_sharpe` 不达标则该窗口不部署(OOS 空仓);v1 仅支持非重叠窗口(`step == oos_days`)。命令 `djinn walk -c configs/walk.example.yaml`。
+- **引擎暖机 `EngineConfig.start`**(H1):`run_backtest(cfg, warmup_start=...)` / `sweep._run_one(..., warmup_start=...)` 让数据覆盖 `[warmup_start, period.end]` 但账本 / 净值从 `period.start` 起——warmup 段仅供因子/择时 lookback,不进净值。引擎主循环只过滤 `trading_index`,`DataView` 仍暴露全量历史(策略首日即可用暖机历史调仓)。
+
 ## FastAPI 后端 (`src/djinn/api/`)
 
 - 长任务(回测/扫描)用 `BackgroundTasks` 后台线程执行,`JobRegistry`(SQLite,`.cache/djinn_jobs.db`)持久化状态 + 进度回调。
@@ -117,6 +120,7 @@ cd frontend && npm install
 # CLI
 djinn run -c configs/backtest.example.yaml --csv-dir <CSV目录>
 djinn sweep -c configs/sweep.example.yaml
+djinn walk -c configs/walk.example.yaml          # Walk-Forward 滚动样本外验证
 djinn data fetch -c configs/backtest.example.yaml
 ```
 
