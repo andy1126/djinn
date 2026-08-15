@@ -350,18 +350,24 @@ def _safe_frame(fn: Any, *args: Any) -> pd.DataFrame:
 def _asof_series(
     values: pd.Series, announce: pd.Series, trading_index: pd.DatetimeIndex
 ) -> pd.Series:
-    """把"按公告日生效"的字段 asof 对齐到交易日(merge_asof,backward)。"""
+    """把"按公告日生效"的字段 asof 对齐到交易日(merge_asof,backward)。
+
+    两侧键统一为 ``datetime64[ns]``:yahoo 财报的 announce_date 可能是 us 精度,
+    与行情交易日(``ns``)不一致时 ``merge_asof`` 会抛 MergeError。
+    """
+    idx_ns = pd.DatetimeIndex(trading_index).astype("datetime64[ns]")
+    ann_ns = pd.to_datetime(announce).dt.tz_localize(None).astype("datetime64[ns]")
     right = pd.DataFrame(
         {
-            "announce_date": pd.to_datetime(announce).to_numpy(),
+            "announce_date": ann_ns.to_numpy(),
             "value": pd.to_numeric(values, errors="coerce").to_numpy(),
         }
     ).dropna(subset=["announce_date"])
     right = right.sort_values("announce_date")
     if len(right) == 0:
-        return pd.Series(float("nan"), index=trading_index)
-    left = pd.DataFrame({"date": trading_index})
+        return pd.Series(float("nan"), index=idx_ns)
+    left = pd.DataFrame({"date": idx_ns})
     merged = pd.merge_asof(
         left, right, left_on="date", right_on="announce_date", direction="backward"
     )
-    return pd.Series(merged["value"].to_numpy(), index=trading_index)
+    return pd.Series(merged["value"].to_numpy(), index=idx_ns)

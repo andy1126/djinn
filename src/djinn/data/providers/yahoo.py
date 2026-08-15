@@ -344,7 +344,7 @@ class YahooProvider(DataProvider):
         if len(revenue) == 0:
             return pd.DataFrame()
 
-        periods = revenue.index
+        periods = pd.DatetimeIndex(revenue.index).astype("datetime64[ns]")
         out = pd.DataFrame(index=pd.DatetimeIndex(periods, name="date"))
         out[COL_ROE] = _safe_div(net_income, equity).reindex(periods) * 100.0
         out[COL_GROSS_MARGIN] = (

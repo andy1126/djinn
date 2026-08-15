@@ -156,6 +156,32 @@ class _DailyValSource:
         return pd.DataFrame()
 
 
+def test_asof_series_mixed_datetime_resolution() -> None:
+    """us 精度 announce_date + ns 交易日 → _asof_series 不抛 MergeError。"""
+    from djinn.factor.engine import _asof_series
+
+    # yahoo 财报 announce_date 曾是 datetime64[us],与行情交易日(ns)不一致
+    announce = pd.Series(
+        pd.to_datetime(["2024-04-15", "2025-04-15"]).astype("datetime64[us]")
+    )
+    values = pd.Series([10.0, 20.0])
+    idx = pd.DatetimeIndex(pd.bdate_range("2024-01-01", "2025-12-31"))
+    out = _asof_series(values, announce, idx)
+    # 公告日前为 NaN,公告后取对应值(不抛 MergeError 即通过)
+    assert out.iloc[-1] == 20.0
+    assert out.loc[pd.Timestamp("2024-04-15")] == 10.0
+
+
+def test_normalize_name_fullwidth() -> None:
+    """新浪名称清洗:全角→半角、去空白(万  科Ａ → 万科A)。"""
+    from djinn.data.providers.akshare import _normalize_name
+
+    assert _normalize_name("万  科Ａ") == "万科A"
+    assert _normalize_name("深振业Ａ") == "深振业A"
+    assert _normalize_name("平安银行") == "平安银行"
+    assert _normalize_name(" 中国 平安 ") == "中国平安"
+
+
 def test_normalize_valuation() -> None:
     """``stock_a_indicator_lg`` 原始列 → 规范化(pe/pb/ps,index=交易日)。"""
     from djinn.data.providers.akshare import AkShareProvider
