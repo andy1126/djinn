@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -54,6 +55,8 @@ class EngineConfig:
     delist_grace_days: int = 30
     # 交易日对齐方式:intersection(交集,默认)/ union(并集,选股回测用)
     calendar: Literal["intersection", "union"] = "intersection"
+    # D1:预计算信号抽样校验(每 N 日对比快/慢路径,不一致回退慢路径并告警)。默认关,零开销。
+    verify_presignal: bool = False
     # 基准标的(union 模式下以其交易日历为主日历时提供)
     benchmark_symbol: str | None = None
 
@@ -160,7 +163,24 @@ class EventDrivenEngine:
                     _log.warning("预计算 %s 信号失败,回退逐日: %s", sym, e)
                     presignals.clear()
                     break
+            # D1:debug 模式下对预计算信号做因果性自检(shift(-1) 等非因果运算会误报)
+            if presignals and os.environ.get("DJINN_DEBUG"):
+                from djinn.strategy.check import check_causal
+
+                for sym, md in data.items():
+                    if sym not in presignals:
+                        continue
+                    problems = check_causal(strategy.signals, md.df)
+                    if problems:
+                        _log.warning(
+                            "预计算信号 %s 疑似非因果(%d 处),请改用 on_bar 实现: %s",
+                            sym,
+                            len(problems),
+                            "; ".join(problems[:3]),
+                        )
         strategy._presignals = presignals  # type: ignore[attr-defined]
+        # D1:verify_presignal 开关透传给策略,on_bar 快路径按 N 日抽样核对
+        strategy._verify_presignal = cfg.verify_presignal  # type: ignore[attr-defined]
 
         # 每标的的 prev_close 缓存(涨跌停需要昨收)
         prev_close: dict[str, float] = {}

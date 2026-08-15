@@ -18,6 +18,10 @@ class MomentumFactor(Factor):
     period = param(20, min=2, max=250, description="动量回看窗口(交易日)")
     skip = param(0, min=0, max=60, description="跳过最近 N 日(剔除短期反转)")
 
+    def _max_lookback(self) -> int:
+        # D3:动量用 shift(s) 与 shift(s+p) 之差,需 s+p 日历史 + 余量
+        return int(self.period) + int(self.skip) + 5
+
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
@@ -35,6 +39,10 @@ class ReversalFactor(Factor):
     category = "momentum"
     period = param(5, min=1, max=60, description="反转回看窗口(交易日)")
 
+    def _max_lookback(self) -> int:
+        # D3:反转 = period 日累计收益
+        return int(self.period) + 5
+
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
@@ -47,6 +55,10 @@ class High52WFactor(Factor):
     name = "high_52w"
     category = "momentum"
     window = param(252, min=20, max=500, description="回看窗口(交易日)")
+
+    def _max_lookback(self) -> int:
+        # D3:52 周高点 = rolling(window).max()
+        return int(self.window) + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict

@@ -17,6 +17,10 @@ class VolatilityFactor(Factor):
     category = "volatility"
     period = param(20, min=5, max=250, description="波动率回看窗口(交易日)")
 
+    def _max_lookback(self) -> int:
+        # D3:波动率 = rolling(period).std()
+        return int(self.period) + 5
+
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
@@ -34,6 +38,10 @@ class BetaFactor(Factor):
         None,
         description="基准代码(如 000300.SH / ^GSPC);None 时沿用截面等权代理",
     )
+
+    def _max_lookback(self) -> int:
+        # D3:beta = rolling(period) 的 cov/var
+        return int(self.period) + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -58,6 +66,10 @@ class DownsideVolatilityFactor(Factor):
     category = "volatility"
     period = param(20, min=5, max=250, description="回看窗口(交易日)")
 
+    def _max_lookback(self) -> int:
+        # D3:下行波动率 = rolling(period).std()
+        return int(self.period) + 5
+
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
@@ -72,6 +84,10 @@ class MaxLotteryFactor(Factor):
     name = "max_lottery"
     category = "volatility"
     period = param(21, min=5, max=60, description="回看窗口(交易日)")
+
+    def _max_lookback(self) -> int:
+        # D3:MAX = rolling(period).apply(top5_mean)
+        return int(self.period) + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -92,6 +108,11 @@ class IdioVolFactor(Factor):
     name = "idio_vol"
     category = "volatility"
     period = param(60, min=20, max=250, description="滚动窗口(交易日)")
+
+    def _max_lookback(self) -> int:
+        # D3:特质波动率先 rolling(period) 估 beta,再对残差 rolling(period) std →
+        # 有效回看约 2×period
+        return int(self.period) * 2 + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict

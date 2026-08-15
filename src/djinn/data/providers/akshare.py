@@ -490,7 +490,8 @@ class AkShareProvider(DataProvider):
         """
         code = _normalize_ak_code(symbol)
         cache_symbol = f"finhist_{code}"
-        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        # D6:基本面 history 30 天过期
+        cached = self.cache.get_fundamentals(self.name, cache_symbol, max_age_days=30)
         if cached is not None and len(cached):
             return cached
         try:

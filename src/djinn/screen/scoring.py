@@ -20,10 +20,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from djinn.factor.base import Panel, PanelDict
 from djinn.factor.engine import FactorPanel
 from djinn.factor.preprocess import neutralize as preprocess_neutralize
+from djinn.factor.preprocess import orthogonalize as preprocess_orthogonalize
 from djinn.factor.preprocess import standardize, winsorize
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
+
+# C14:缺失打分因子的告警去重(score_universe 逐日调用时只警一次,避免刷屏)
+_WARNED_MISSING: set[str] = set()
+# C14:最近一次 score_cross_section 的 meta(实际参与 / 缺失的因子名单,供调用方/测试断言)
+LAST_SCORE_META: dict[str, list[str]] = {}
 
 
 class FactorScore(BaseModel):
@@ -46,6 +52,7 @@ def score_cross_section(
     neutralize: bool = False,
     industry_map: dict[str, str] | None = None,
     log_mktcap: pd.Series | None = None,
+    orthogonalize: bool = False,
 ) -> pd.Series:
     """单截面合成打分。
 
@@ -56,26 +63,50 @@ def score_cross_section(
         neutralize: 是否在去极值后、标准化前做行业/市值中性化(需给 industry_map
             或 log_mktcap,否则 warning 并跳过)。
         industry_map: symbol → 行业名;log_mktcap: index=symbol 的对数市值 Series。
+        orthogonalize: 是否在标准化前对因子截面做 Schmidt 正交化(按 scores 顺序,
+            后序因子对前序取残差,剥离因子间线性重叠)。
 
     Returns:
         index=symbol 的综合得分 Series(越高越优)。
     """
     if cross.empty:
         return pd.Series(dtype=float)
-    total = pd.Series(0.0, index=cross.index, dtype=float)
-    for fs in scores:
-        if fs.factor not in cross.columns:
-            # C14:缺失因子显式告警(否则静默重归一化,权重分配与用户预期不符)
+    # 可用因子列(按 scores 顺序);缺失因子显式告警,每个因子只警一次(C14)
+    cols = [fs.factor for fs in scores if fs.factor in cross.columns]
+    missing = [fs.factor for fs in scores if fs.factor not in cross.columns]
+    for name in missing:
+        if name not in _WARNED_MISSING:
+            _WARNED_MISSING.add(name)
             _log.warning(
-                "打分因子 %s 不在因子面板中(可用: %s),已跳过",
-                fs.factor,
+                "打分因子 %s 不在因子面板中(可用: %s),已跳过(仅告警一次)",
+                name,
                 list(cross.columns),
             )
+    LAST_SCORE_META["factors_used"] = list(cols)
+    LAST_SCORE_META["missing"] = missing
+    # 组装 factor × symbol 面板,整体去极值(winsorize 逐行独立,等价逐因子)
+    panel = cross[cols].T.astype(float)
+    if preprocess:
+        panel = winsorize(panel)
+        # C10:标准化前 Schmidt 正交化(后序因子对前序取残差)
+        if orthogonalize and len(cols) >= 2:
+            # 单截面伪造成「1 日 × symbol」多因子面板,复用 orthogonalize 的逐日 Schmidt
+            # (其按 date 遍历、各因子共享 index;这里共享一个虚拟 index)。
+            dummy = pd.Index([0])
+            ortho_input = {
+                c: pd.DataFrame(
+                    [panel.loc[c].to_numpy()], index=dummy, columns=panel.columns
+                )
+                for c in cols
+            }
+            ortho = preprocess_orthogonalize(ortho_input, order=cols)
+            panel = pd.DataFrame({c: ortho[c].iloc[0] for c in cols}).T
+    total = pd.Series(0.0, index=cross.index, dtype=float)
+    for fs in scores:
+        if fs.factor not in cols:
             continue
-        # 转置成 1×N 单行面板,复用 preprocess 的行向(截面)实现
-        row = cross[[fs.factor]].T.astype(float)
+        row = panel.loc[[fs.factor]]
         if preprocess:
-            row = winsorize(row)
             if neutralize:
                 if industry_map is not None or log_mktcap is not None:
                     logcap_panel: Panel | None = None

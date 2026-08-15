@@ -48,7 +48,10 @@ def rolling_ic_weights(
         {name: compute_ic(factor, fwd_returns) for name, factor in factors.items()}
     )
     if shift_periods is not None and shift_periods > 0:
-        ic_panel = ic_panel.shift(shift_periods)
+        # 先补齐到 fwd_returns 完整日期(尾部 shift_periods 行因前向收益不可知而为
+        # NaN),再右移:``ic_effective(t) = ic(t - shift_periods)`` 覆盖到 now。
+        # 若只 shift 不 reindex,index 会停在 now-p,策略调仓日取不到当日权重。
+        ic_panel = ic_panel.reindex(fwd_returns.index).shift(shift_periods)
     rolling_mean = ic_panel.rolling(window, min_periods=min_periods).mean()
     rolling_std = ic_panel.rolling(window, min_periods=min_periods).std()
     icir = rolling_mean.div(rolling_std.replace(0.0, np.nan)).fillna(0.0)

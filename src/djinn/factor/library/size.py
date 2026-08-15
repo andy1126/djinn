@@ -14,6 +14,7 @@ class SizeFactor(Factor):
 
     name = "size"
     category = "size"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_MARKET_CAP,)
 
     def compute(

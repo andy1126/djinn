@@ -159,12 +159,23 @@ class DataCache:
         with self._key_lock(key):
             self._write(key, df)
 
-    def get_fundamentals(self, provider: str, symbol: str) -> pd.DataFrame | None:
+    def get_fundamentals(
+        self, provider: str, symbol: str, max_age_days: float | None = None
+    ) -> pd.DataFrame | None:
+        """读基本面缓存(整帧);``max_age_days`` 给定时超龄视为 miss(D6)。
+
+        与 ``get_universe`` 同语义:用磁盘 parquet mtime 判龄,超龄丢弃内存
+        拷贝返回 None 由调用方重拉(基本面 history 建议 30 天)。
+        """
         key = self.make_key(provider, symbol, dtype="fundamental")
-        df = self._mem_get(key)
-        if df is not None:
-            return df
         with self._key_lock(key):
+            if max_age_days is not None:
+                path = self._parquet_path(key)
+                if path.exists():
+                    age_sec = time.time() - path.stat().st_mtime
+                    if age_sec > max_age_days * 86400:
+                        self._mem_pop(key)
+                        return None
             df = self._mem_get(key)
             if df is not None:
                 return df

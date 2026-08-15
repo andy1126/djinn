@@ -13,6 +13,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
 import pandas as pd
 
 from djinn.data.schema import (
@@ -20,10 +23,12 @@ from djinn.data.schema import (
     COL_CLOSE,
     COL_HIGH,
     COL_LOW,
+    COL_MARKET_CAP,
     COL_OPEN,
     COL_VOLUME,
 )
 from djinn.factor.base import Factor, Panel, PanelDict
+from djinn.factor.composite import composite_score, rolling_ic_weights
 from djinn.portfolio.allocation import Allocation, EqualWeight, estimate_covariance
 from djinn.screen.scoring import FactorScore, score_cross_section
 from djinn.strategy.base import SCOPE_PORTFOLIO, Context, Strategy
@@ -46,6 +51,9 @@ class FactorPortfolioStrategy(Strategy):
         allocation: Allocation | None = None,
         fundamentals: PanelDict | None = None,
         preprocess: bool = True,
+        weighting: str = "static",
+        icir_window: int = 60,
+        icir_min_periods: int = 20,
         min_amount: float | None = None,
         min_list_days: int | None = None,
         exclude_st: bool = False,
@@ -54,6 +62,7 @@ class FactorPortfolioStrategy(Strategy):
         industry_map: dict[str, str] | None = None,
         max_sector_weight: float | None = None,
         min_score_diff: float = 0.0,
+        neutralize: bool = False,
     ) -> None:
         super().__init__()
         if not factors:
@@ -67,6 +76,12 @@ class FactorPortfolioStrategy(Strategy):
         self.allocation = allocation or EqualWeight()
         self._fundamentals = fundamentals or {}
         self.preprocess = preprocess
+        # C9:因子加权方式(static=手填权重;icir=滚动 ICIR 自动加权,符号自适配方向)
+        if weighting not in ("static", "icir"):
+            raise ValueError(f"weighting 只支持 static/icir,实际 {weighting!r}")
+        self.weighting = weighting
+        self.icir_window = max(2, int(icir_window))
+        self.icir_min_periods = max(2, int(icir_min_periods))
         self._bars_seen = 0
         # G1~G4:选股流水线增强(全部可选,默认关闭,保持 G0 等价性)
         self.min_amount = min_amount
@@ -77,6 +92,10 @@ class FactorPortfolioStrategy(Strategy):
         self.industry_map = industry_map
         self.max_sector_weight = max_sector_weight
         self.min_score_diff = min_score_diff
+        # C5:打分前行业/市值中性化(需 industry_map 或 fundamentals 市值面板)
+        self.neutralize = neutralize
+        # G9:调仓快照(每次 _select_pool 成功把日期/名单/得分 append 进来,供报告展示)
+        self.selection_log: list[dict[str, Any]] = []
 
     def on_bar(self, ctx: Context) -> None:
         n = self._bars_seen
@@ -116,21 +135,48 @@ class FactorPortfolioStrategy(Strategy):
             return [], {}
         ohlcv = {k: v.loc[v.index >= cutoff] for k, v in ohlcv.items()}
         fundamentals = {k: df.loc[df.index >= cutoff] for k, df in fundamentals.items()}
-        # 逐因子取最新截面
-        cross: dict[str, pd.Series] = {}
-        for f in self._factors:
-            try:
-                panel = f.compute(prices, ohlcv, fundamentals)
-            except Exception as e:
-                _log.warning("因子 %s 计算失败 @%s: %s", f.name, ctx.now, e)
-                continue
-            if len(panel) == 0:
-                continue
-            cross[f.name] = panel.iloc[-1]
-        if not cross:
-            return [], {}
-        cross_df = pd.DataFrame(cross)
-        score = score_cross_section(cross_df, self._scores, self.preprocess)
+        # C6:因子声明 benchmark 时注入真实基准日收益(替代截面等权代理);基准经
+        # 引擎 ctx.benchmark(symbol, DataView) 提供,≤now 切片天然无未来函数。
+        if any(getattr(f, "benchmark", None) for f in self._factors):
+            bench = getattr(ctx, "benchmark", None)
+            if bench is not None:
+                sym, view = bench
+                try:
+                    closes = view.history(sym, "close", lb + 10)
+                    if len(closes) >= 2:
+                        bench_rets = closes.pct_change().dropna()
+                        if len(bench_rets):
+                            ohlcv = {**ohlcv, "__benchmark__": bench_rets}
+                except Exception:
+                    pass  # 基准不可用时退化截面等权代理
+        # 打分:C9 icir 用滚动 ICIR 权重合成;否则 static 静态权重(逐因子最新截面)
+        if self.weighting == "icir":
+            score = self._icir_score(prices, ohlcv, fundamentals)
+        else:
+            # 逐因子取最新截面
+            cross: dict[str, pd.Series] = {}
+            for f in self._factors:
+                try:
+                    panel = f.compute(prices, ohlcv, fundamentals)
+                except Exception as e:
+                    _log.warning("因子 %s 计算失败 @%s: %s", f.name, ctx.now, e)
+                    continue
+                if len(panel) == 0:
+                    continue
+                cross[f.name] = panel.iloc[-1]
+            if not cross:
+                return [], {}
+            cross_df = pd.DataFrame(cross)
+            # C5:neutralize=True 时打分前做行业/市值中性化
+            log_mktcap = self._log_mktcap_row(fundamentals) if self.neutralize else None
+            score = score_cross_section(
+                cross_df,
+                self._scores,
+                self.preprocess,
+                neutralize=self.neutralize,
+                industry_map=self.industry_map,
+                log_mktcap=log_mktcap,
+            )
         score = score.dropna()
         if score.empty:
             return [], {}
@@ -162,6 +208,14 @@ class FactorPortfolioStrategy(Strategy):
         )
         # G3:行业暴露上限(策略层权重缩放)
         weights = self._apply_sector_cap(weights)
+        # G9:记录本次调仓快照(日期/名单/得分),供报告 selection_log 展示
+        self.selection_log.append(
+            {
+                "date": str(ctx.now),
+                "selected": list(selected),
+                "scores": {s: float(score[s]) for s in selected if s in score.index},
+            }
+        )
         return selected, weights
 
     # ── G1:资格过滤 ─────────────────────────────────────
@@ -288,6 +342,55 @@ class FactorPortfolioStrategy(Strategy):
     def _visible_fundamentals(self, ctx: Context) -> PanelDict:
         now = pd.Timestamp(ctx.now)
         return {k: df.loc[:now] for k, df in self._fundamentals.items()}
+
+    def _log_mktcap_row(self, fundamentals: PanelDict) -> pd.Series | None:
+        """当日(截至 now 最新一期)对数市值截面,供中性化剥离规模暴露(C5)。
+
+        市值面板按 announce_date point-in-time 生效,``iloc[-1]`` 即最新一期;
+        非正 / 缺失市值置 NaN,由 :func:`~djinn.factor.preprocess.neutralize` 的
+        lstsq mask 剔除。
+        """
+        cap = fundamentals.get(COL_MARKET_CAP)
+        if cap is None or cap.empty:
+            return None
+        row = cap.iloc[-1].astype(float)
+        positive = row.where(row > 0)
+        return pd.Series(np.log(positive.to_numpy(dtype=float)), index=positive.index)
+
+    def _icir_score(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> pd.Series:
+        """滚动 ICIR 加权合成得分(C9):逐因子历史面板 → 前向收益 → ICIR 权重。
+
+        防未来函数:``fwd_returns = prices.pct_change(p).shift(-p)`` 在 now 之后为
+        NaN(未来价格不可见);``rolling_ic_weights(shift_periods=p)`` 再把 IC 序列
+        右移 p 日,即 now 日只用 now−p 日(其前向收益窗口 now−p→now 已落定)的 IC。
+        权重符号自适配方向(IC 为负的因子自动取负权),无需手工 ``direction``。
+        """
+        factor_panels: dict[str, Panel] = {}
+        for f in self._factors:
+            try:
+                panel = f.compute(prices, ohlcv, fundamentals)
+            except Exception as e:
+                _log.warning("因子 %s 计算失败 @icir: %s", f.name, e)
+                continue
+            if len(panel) > 0:
+                factor_panels[f.name] = panel
+        if not factor_panels or len(prices) < 2:
+            return pd.Series(dtype=float)
+        p = self.rebalance_freq
+        fwd = prices.pct_change(p).shift(-p)
+        weights = rolling_ic_weights(
+            factor_panels,
+            fwd,
+            window=self.icir_window,
+            min_periods=self.icir_min_periods,
+            shift_periods=p,
+        )
+        if weights.empty:
+            return pd.Series(dtype=float)
+        score = composite_score(factor_panels, weights)
+        return score.iloc[-1] if not score.empty else pd.Series(dtype=float)
 
     def _selected_cov(self, prices: Panel, selected: list[str]) -> pd.DataFrame | None:
         """由可见收盘价面板估计选中标的的日收益协方差(不足时返回 None 退化等权)。

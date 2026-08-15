@@ -25,8 +25,10 @@ from djinn.data.schema import (
     COL_AMOUNT,
     COL_CLOSE,
     COL_DIVIDEND,
+    COL_FLOAT_CAP,
     COL_HIGH,
     COL_LOW,
+    COL_MARKET_CAP,
     COL_OPEN,
     COL_PB,
     COL_PE,
@@ -64,12 +66,16 @@ _HISTORY_LOOKBACK_DAYS = 400
 # "用今日快照给历史打分"的前视;无日频估值时退化为快照口径(见 ``_asof_field_panel``)。
 VALUATION_FIELDS: tuple[str, ...] = (COL_PE, COL_PB, COL_PS)
 
+# 市值类字段:无历史时序时用「收盘价 × 股本」合成(C2 市值 PIT 近似)。
+_CAP_APPROX_FIELDS: frozenset[str] = frozenset({COL_MARKET_CAP, COL_FLOAT_CAP})
+
 
 @dataclass
 class FactorPanel:
     """因子面板容器:``{因子名 → DataFrame(date × symbol)}``。"""
 
     data: dict[str, Panel] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def factor_names(self) -> list[str]:
@@ -113,6 +119,7 @@ class FactorEngine:
 
     def __init__(self) -> None:
         self._warned_fields: set[str] = set()  # C3:退化告警按字段去重
+        self._approx_fields: set[str] = set()  # C2:市值类字段走"收盘×股本"近似的字段
 
     def compute(
         self,
@@ -141,6 +148,7 @@ class FactorEngine:
                 end,
                 fundamentals_source,
                 market,
+                close_panel=prices,
             )
         # C6:为声明了 benchmark 的因子预拉基准日收益(经 __benchmark__ 键注入)
         for f in factors:
@@ -160,7 +168,29 @@ class FactorEngine:
             _log.info("计算因子 %s(%d 标的)", f.name, len(universe))
             f.validate_inputs(fundamentals, ohlcv)
             data[f.name] = f.compute(prices, ohlcv, fundamentals)
-        return FactorPanel(data=data)
+        panel = FactorPanel(data=data)
+        if self._approx_fields:
+            panel.meta["market_cap_approx"] = sorted(self._approx_fields)
+        return panel
+
+    def caveats(self) -> list[str]:
+        """C3:数据口径告警(供报告层标注非 point-in-time 字段)。
+
+        - ``_warned_fields``:无历史/日频估值、退化为快照常数(pe/pb/ps 等);
+        - ``_approx_fields``:市值类字段由「收盘价×股本」近似(股本未做 PIT)。
+        """
+        out: list[str] = []
+        if self._warned_fields:
+            out.append(
+                "以下字段为快照口径(非 point-in-time,IC 可能高估): "
+                + ", ".join(sorted(self._warned_fields))
+            )
+        if self._approx_fields:
+            out.append(
+                "市值/流通市值由收盘价 x 股本近似(股本未做 PIT): "
+                + ", ".join(sorted(self._approx_fields))
+            )
+        return out
 
     def _benchmark_returns(
         self,
@@ -232,6 +262,8 @@ class FactorEngine:
         end: date,
         source: FundamentalsSource,
         market: Market | None,
+        *,
+        close_panel: Panel | None = None,
     ) -> PanelDict:
         # C15:按标的各取一次财报时序 + 日频估值 + 分红事件,再按字段 asof 对齐;
         # 消除"按字段循环对每个标的重复拉取"的 ×N 冗余(财报时序被拉 9 遍)。
@@ -260,6 +292,7 @@ class FactorEngine:
                 histories,
                 valuations,
                 dividends,
+                close_panel=close_panel,
             )
             for f in fields
         }
@@ -275,6 +308,8 @@ class FactorEngine:
         histories: dict[str, pd.DataFrame],
         valuations: dict[str, pd.DataFrame],
         dividends: dict[str, pd.DataFrame],
+        *,
+        close_panel: Panel | None = None,
     ) -> Panel:
         """单基本面字段的 point-in-time 宽表(输入为已预取的 per-symbol 时序)。
 
@@ -319,6 +354,17 @@ class FactorEngine:
                     series = _asof_series(
                         hist[field], hist["announce_date"], trading_index
                     )
+            if (
+                series is None
+                and field in _CAP_APPROX_FIELDS
+                and close_panel is not None
+            ):
+                # C2:市值类字段无历史时序时,用「收盘价 × 股本」合成——股本取最新快照
+                # 反推(market_cap/close),价格逐日变动 → 消除"今日市值给历史打分"的前视;
+                # 股本未做 PIT(漂移不频繁,接受并在 meta 标注)。
+                series = self._cap_approx_series(
+                    field, sym, trading_index, end, source, market, close_panel
+                )
             if series is None:
                 # 退化:用 when=end 的快照常数填充(估值类近似,非严格 PIT)
                 if field not in self._warned_fields:
@@ -336,6 +382,36 @@ class FactorEngine:
                 series = pd.Series(val, index=trading_index)
             cols[sym] = series.reindex(trading_index)
         return pd.DataFrame(cols)
+
+    def _cap_approx_series(
+        self,
+        field: str,
+        sym: str,
+        trading_index: pd.DatetimeIndex,
+        end: date,
+        source: FundamentalsSource,
+        market: Market | None,
+        close_panel: Panel,
+    ) -> pd.Series | None:
+        """市值近似:收盘价逐日 × 股本(最新快照 market_cap/close 反推)。
+
+        成功时记录到 ``_approx_fields`` 供 ``FactorPanel.meta`` 标注;失败返回
+        None(调用方继续走快照常数退化)。
+        """
+        close_series = close_panel.get(sym)
+        if close_series is None or close_series.dropna().empty:
+            return None
+        try:
+            snap = source.get_snapshot([sym], end, market)
+            price_now = float(pd.to_numeric(snap["close"], errors="coerce").iloc[0])
+            cap_now = float(pd.to_numeric(snap[field], errors="coerce").iloc[0])
+        except Exception:
+            return None
+        if not (price_now > 0) or not (cap_now == cap_now and cap_now > 0):
+            return None
+        shares = cap_now / price_now
+        self._approx_fields.add(field)
+        return close_series.reindex(trading_index).astype(float) * shares
 
 
 def _safe_frame(fn: Any, *args: Any) -> pd.DataFrame:

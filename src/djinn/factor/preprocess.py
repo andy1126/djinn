@@ -79,6 +79,13 @@ def neutralize(
 
     out = df.copy()
     symbols = list(df.columns)
+    # D12:行业哑变量跨日预计算(industry_map 恒定,get_dummies 只需一次,不再逐日重算)
+    ind_dummies: pd.DataFrame | None = None
+    if industry_map:
+        ind = pd.Series(
+            [industry_map.get(s) for s in symbols], index=symbols, dtype=object
+        )
+        ind_dummies = pd.get_dummies(ind, prefix="ind", dtype=float)
     for ts in df.index:
         y = df.loc[ts].astype(float)
         valid = y.notna()
@@ -90,12 +97,9 @@ def neutralize(
         if log_mktcap is not None:
             cap_row = log_mktcap.loc[ts].reindex(symbols).astype(float)
             cols.append(cap_row.loc[syms].rename("logcap"))
-        if industry_map:
-            ind = pd.Series(
-                [industry_map.get(s) for s in syms], index=syms, dtype=object
-            )
-            dummies = pd.get_dummies(ind, prefix="ind", dtype=float)
-            cols.extend([dummies[c] for c in dummies.columns])
+        if ind_dummies is not None:
+            sub = ind_dummies.loc[syms]
+            cols.extend([sub[c] for c in sub.columns])
         if not cols:
             out.loc[ts] = y - y.mean()
             continue

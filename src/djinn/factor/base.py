@@ -67,6 +67,15 @@ class Factor(ABC):
             if k not in declared:
                 raise ValueError(f"因子 {type(self).__name__} 无参数 {k!r}")
             setattr(self, k, v)
+        # D3:按实际参数计算最大回看窗口(滚动类因子 = 窗口 + 余量,基本面直读 = 1)
+        self.max_lookback = self._max_lookback()
+
+    def _max_lookback(self) -> int:
+        """最大回看窗口(交易日):``FactorPortfolioStrategy`` 据此截断调仓日面板。
+
+        默认取类属性;滚动 / ewm 类因子按实际参数覆写,基本面直读类返回 1。
+        """
+        return int(type(self).max_lookback)
 
     def validate_inputs(self, fundamentals: PanelDict, ohlcv: PanelDict) -> None:
         """校验 ``compute()`` 所需的输入字段存在且非全 NaN,缺失即抛 FactorError。

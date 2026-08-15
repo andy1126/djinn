@@ -25,6 +25,7 @@ class EPFactor(Factor):
 
     name = "ep"
     category = "value"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_PE,)
 
     def compute(
@@ -38,6 +39,7 @@ class BPFactor(Factor):
 
     name = "bp"
     category = "value"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_PB,)
 
     def compute(
@@ -51,6 +53,7 @@ class SPFactor(Factor):
 
     name = "sp"
     category = "value"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_PS,)
 
     def compute(
@@ -64,6 +67,7 @@ class CFPFactor(Factor):
 
     name = "cfp"
     category = "value"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_OCF, COL_MARKET_CAP)
 
     def compute(

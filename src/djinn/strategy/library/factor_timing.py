@@ -39,6 +39,7 @@ class FactorTimingStrategy(FactorPortfolioStrategy):
     def on_bar(self, ctx: Context) -> None:
         n = self._bars_seen
         self._bars_seen += 1
+        is_rebalance = n % self.rebalance_freq == 0
 
         # 0. 更新规则缓冲(基准 + 池内 ∪ 持仓)
         if self._regime is not None:
@@ -63,7 +64,7 @@ class FactorTimingStrategy(FactorPortfolioStrategy):
         cap = self._regime.exposure_cap() if self._regime is not None else 1.0
 
         # B. 调仓日:因子重选池(出池即卖,因子判决优先)
-        if n % self.rebalance_freq == 0:
+        if is_rebalance:
             selected, weights = self._select_pool(ctx)
             for s, pos in ctx.portfolio.positions.items():
                 if pos.qty > 0 and s not in selected:
@@ -100,7 +101,10 @@ class FactorTimingStrategy(FactorPortfolioStrategy):
             w = self._base_w.get(s, 0.0) * cap  # 名义权重 × 闸门;被挡份额留现金
             if w > 0:
                 ctx.order_target_percent(s, w)
-                ctx.orders[-1].tag = f"entry:cap={cap:.2f}"
+                # 调仓日买入是因子重选结果 → rebalance:in;非调仓日(冷却后再入场) → entry:cap=*
+                ctx.orders[-1].tag = (
+                    "rebalance:in" if is_rebalance else f"entry:cap={cap:.2f}"
+                )
                 if isinstance(self._exit, ATRTrailingExit):
                     with suppress(Exception):
                         self._exit.arm(s, ctx.data.latest(s, "close"))

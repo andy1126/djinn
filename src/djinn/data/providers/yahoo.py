@@ -37,6 +37,7 @@ from djinn.data.schema import (
     COL_LOW,
     COL_MARKET_CAP,
     COL_NET_PROFIT,
+    COL_OCF,
     COL_OPEN,
     COL_PB,
     COL_PE,
@@ -59,6 +60,9 @@ from djinn.utils.exceptions import DataError, ProviderError
 from djinn.utils.logging import get_logger
 
 _log = get_logger(__name__)
+
+# D6:基本面 history 缓存 30 天过期(财报时序静态,过期重拉足够)
+_FIN_HIST_TTL_DAYS = 30
 
 # yfinance 列名 → 规范化列名。
 _YF_MAP = {
@@ -299,7 +303,7 @@ class YahooProvider(DataProvider):
     def get_fundamentals_history(
         self, symbol: str, start: date, end: date
     ) -> pd.DataFrame:
-        """单标的财务时序(income_stmt + balance_sheet 年度报表)。
+        """单标的财务时序(income_stmt + balance_sheet + cashflow 年度报表)。
 
         yfinance 无公告日,报表列即财报期末;此处以 ``report_date + 45 天``
         近似公告日(同 A 股 akshare 口径,标注为近似)。Yahoo 硬性上限 ~4 年度,
@@ -310,7 +314,9 @@ class YahooProvider(DataProvider):
         except ImportError as e:  # pragma: no cover
             raise ProviderError("yfinance 未安装") from e
         cache_symbol = f"finhist_{symbol}"
-        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        cached = self.cache.get_fundamentals(
+            self.name, cache_symbol, max_age_days=_FIN_HIST_TTL_DAYS
+        )
         if cached is not None and len(cached):
             return cached
         self._throttle()
@@ -318,19 +324,26 @@ class YahooProvider(DataProvider):
             t = yf.Ticker(symbol)
             ist = t.income_stmt
             bs = t.balance_sheet
+            cf = t.cashflow
         except Exception as e:
             raise ProviderError(f"yfinance 拉取 {symbol} 财务报表失败: {e}") from e
         if ist is None or len(ist) == 0:
             raise DataError(f"yfinance {symbol} 利润表为空")
-        df = self._normalize_fin_history(ist, bs)
+        df = self._normalize_fin_history(ist, bs, cf)
         if df is None or len(df) == 0:
             raise DataError(f"yfinance {symbol} 财务时序为空")
         self.cache.put_fundamentals(self.name, cache_symbol, df)
         return df
 
     @staticmethod
-    def _normalize_fin_history(ist: pd.DataFrame, bs: pd.DataFrame) -> pd.DataFrame:
-        """income_stmt / balance_sheet → 规范化财务时序(roe/gross_margin/同比)。"""
+    def _normalize_fin_history(
+        ist: pd.DataFrame, bs: pd.DataFrame, cf: pd.DataFrame | None = None
+    ) -> pd.DataFrame:
+        """income_stmt / balance_sheet / cashflow → 规范化财务时序。
+
+        经营现金流(OCF)取自 cashflow 表的 ``Operating Cash Flow``;缺失时该列
+        置空(不 fail,由因子层 ``required_fundamentals`` 兜底)。
+        """
 
         def row_at(frm: pd.DataFrame, label: str) -> pd.Series:
             if frm is None or label not in frm.index:
@@ -354,6 +367,12 @@ class YahooProvider(DataProvider):
         out[COL_NET_PROFIT] = net_income.reindex(periods)
         total_assets = row_at(bs, "Total Assets")
         out[COL_TOTAL_ASSETS] = total_assets.reindex(periods)
+        ocf = (
+            row_at(cf, "Operating Cash Flow")
+            if cf is not None
+            else pd.Series(dtype=float)
+        )
+        out[COL_OCF] = ocf.reindex(periods)
         # 同比:与上一会计年度比较(升序后 shift 1)
         rev_asc = revenue.reindex(periods).sort_index()
         ni_asc = net_income.reindex(periods).sort_index()

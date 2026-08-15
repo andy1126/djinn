@@ -1,4 +1,4 @@
-"""djinn.engine — 事件驱动引擎:事件 / 总线 / 撮合 / 费用 / 滑点 / 约束。"""
+"""djinn.engine — 事件驱动引擎:撮合 / 费用 / 滑点 / 约束 / 订单执行。"""
 
 from __future__ import annotations
 
@@ -12,9 +12,8 @@ from djinn.engine.commission import (
     make_commission,
 )
 from djinn.engine.constraints import TradeConstraints, check_constraints, limit_prices
-from djinn.engine.event_bus import EventBus
 from djinn.engine.event_engine import BacktestResult, EngineConfig, EventDrivenEngine
-from djinn.engine.events import Event, EventPriority, Fill, Order, Rejection
+from djinn.engine.events import Fill, Order, Rejection
 from djinn.engine.slippage import (
     FixedBpsSlippage,
     RandomSlippage,
@@ -31,10 +30,7 @@ __all__ = [
     "CommissionModel",
     "ConservativeCommissionModel",
     "EngineConfig",
-    "Event",
-    "EventBus",
     "EventDrivenEngine",
-    "EventPriority",
     "Fill",
     "FixedBpsSlippage",
     "HKCommissionModel",

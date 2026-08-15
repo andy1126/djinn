@@ -79,6 +79,7 @@ class FactorReport:
     turnover: float
     ic_by_group: pd.Series = field(default_factory=pd.Series)
     recommended_rebalance: str | None = None
+    data_caveats: list[str] = field(default_factory=list)
 
     # ── 序列化(与 BacktestReport 的 {index,values}/{index,columns,data} 约定一致)──
     @staticmethod
@@ -112,6 +113,7 @@ class FactorReport:
             "turnover": _finite(self.turnover),
             "ic_by_group": self._series(self.ic_by_group),
             "recommended_rebalance": self.recommended_rebalance,
+            "data_caveats": list(self.data_caveats),
         }
 
 
@@ -123,8 +125,12 @@ def analyze_factor(
     ic_method: str = "spearman",
     n_quantiles: int = 5,
     industry_map: dict[str, str] | None = None,
+    caveats: list[str] | None = None,
 ) -> FactorReport:
-    """一站式因子分析:IC + 汇总 + 衰减 + 分层 + 多空 + 单调性 + 换手。"""
+    """一站式因子分析:IC + 汇总 + 衰减 + 分层 + 多空 + 单调性 + 换手。
+
+    ``caveats`` 为数据口径告警(C3,来自 ``FactorEngine.caveats()``),随报告透出。
+    """
     primary = min(fwd_returns) if fwd_returns else 1
     ic = compute_ic(factor, fwd_returns[primary], method=ic_method)  # type: ignore[arg-type]
     qret = quantile_returns(factor, fwd_returns[primary], n_quantiles)
@@ -146,6 +152,7 @@ def analyze_factor(
             if industry_map
             else pd.Series(dtype=float)
         ),
+        data_caveats=list(caveats or []),
     )
 
 

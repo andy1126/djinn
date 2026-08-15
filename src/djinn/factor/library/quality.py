@@ -19,6 +19,7 @@ class ROEFactor(Factor):
 
     name = "roe"
     category = "quality"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_ROE,)
 
     def compute(
@@ -32,6 +33,7 @@ class GrossMarginFactor(Factor):
 
     name = "gross_margin"
     category = "quality"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_GROSS_MARGIN,)
 
     def compute(
@@ -45,6 +47,7 @@ class NetProfitMarginFactor(Factor):
 
     name = "net_profit_margin"
     category = "quality"
+    max_lookback: int = 1  # D3:基本面直读,无滚动窗口
     required_fundamentals = (COL_NET_PROFIT, COL_REVENUE)
 
     def compute(
@@ -63,6 +66,7 @@ class AccrualsFactor(Factor):
 
     name = "accruals"
     category = "quality"
+    max_lookback: int = 1  # D3:环比变化仅需 1 期前值
     required_fundamentals = (COL_NET_PROFIT, COL_OCF, COL_TOTAL_ASSETS)
 
     def compute(
@@ -81,6 +85,7 @@ class AssetGrowthFactor(Factor):
 
     name = "asset_growth"
     category = "quality"
+    max_lookback: int = 1  # D3:环比变化仅需 1 期前值
     required_fundamentals = (COL_TOTAL_ASSETS,)
 
     def compute(

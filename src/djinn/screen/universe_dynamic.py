@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import date
 
 import pandas as pd
@@ -43,12 +44,11 @@ class DynamicUniverse:
         """``when`` 当日(或之前最近记录日)的成分;无记录返回空列表。"""
         if not self._dates:
             return []
-        if when in self._map:
-            return list(self._map[when])
-        prior = [d for d in self._dates if d <= when]
-        if not prior:
+        # D9:二分定位 ``≤ when`` 的最近记录日(O(log T),替代线性扫)
+        pos = bisect_right(self._dates, when)
+        if pos == 0:
             return []
-        return list(self._map[prior[-1]])
+        return list(self._map[self._dates[pos - 1]])
 
     def __len__(self) -> int:
         return len(self._dates)

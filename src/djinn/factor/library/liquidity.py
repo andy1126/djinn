@@ -17,6 +17,10 @@ class TurnoverFactor(Factor):
     required_fundamentals = (COL_FLOAT_CAP,)
     required_ohlcv = (COL_AMOUNT,)
 
+    def _max_lookback(self) -> int:
+        # D3:换手 = rolling(period).mean()
+        return int(self.period) + 5
+
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
     ) -> Panel:
@@ -38,6 +42,10 @@ class AmihudFactor(Factor):
     category = "liquidity"
     period = param(20, min=1, max=120, description="平滑窗口(交易日)")
     required_ohlcv = (COL_AMOUNT,)
+
+    def _max_lookback(self) -> int:
+        # D3:Amihud = rolling(period).mean()
+        return int(self.period) + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
@@ -61,6 +69,10 @@ class TurnoverChangeFactor(Factor):
     long = param(120, min=30, max=250, description="长期窗口(交易日)")
     required_fundamentals = (COL_FLOAT_CAP,)
     required_ohlcv = (COL_AMOUNT,)
+
+    def _max_lookback(self) -> int:
+        # D3:变化率 = short/long 均换手之比,回看 = long 窗口
+        return int(self.long) + 5
 
     def compute(
         self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict

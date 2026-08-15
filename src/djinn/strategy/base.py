@@ -310,11 +310,33 @@ class Strategy(ABC):  # noqa: B024
             self._signal_state: dict[str, int] = {}
         # D1 快速路径:引擎预计算的信号序列,O(1) asof 查表(≤now 最近非 NaN 值)
         presignals = getattr(self, "_presignals", None)
+        # D1 抽样校验:verify_presignal 开启时每 50 日对比快/慢路径,不一致回退慢路径
+        do_verify = bool(getattr(self, "_verify_presignal", False))
+        if do_verify:
+            if not hasattr(self, "_verify_n"):
+                self._verify_n = 0
+            do_verify = self._verify_n % 50 == 0
+            self._verify_n += 1
         for symbol in ctx.data.symbols:
             if presignals is not None and symbol in presignals:
                 ser = presignals[symbol]
                 asof_val = ser.asof(pd.Timestamp(ctx.now))
                 today_sig = int(asof_val) if pd.notna(asof_val) else 0
+                if do_verify:
+                    df = ctx.data[symbol]
+                    if len(df):
+                        slow = self.signals(df)
+                        slow_sig = int(slow.iloc[-1]) if len(slow) else 0
+                        if slow_sig != today_sig:
+                            _log.warning(
+                                "verify_presignal: %s @%s 快路径 %s != 慢路径 %s,"
+                                "该标的回退逐日计算",
+                                symbol,
+                                ctx.now,
+                                today_sig,
+                                slow_sig,
+                            )
+                            presignals.pop(symbol, None)
             else:
                 df = ctx.data[symbol]
                 if len(df) == 0:

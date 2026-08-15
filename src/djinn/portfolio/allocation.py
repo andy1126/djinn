@@ -23,6 +23,9 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from djinn.utils.exceptions import StrategyError
+from djinn.utils.logging import get_logger
+
+_log = get_logger(__name__)
 
 AllocationType = Literal[
     "equal",
@@ -48,6 +51,17 @@ class Allocation(ABC):
 
     # A8:分配器所需的输入依赖(引擎再平衡路径无法提供时启动校验拒绝)
     requires: frozenset[str] = frozenset()
+    _warned: bool = False  # 退化告警只警一次(A8)
+
+    def _warn_degrade(self) -> None:
+        """缺参退化为等权时显式告警一次(替代静默,便于排查配置错误)。"""
+        if not self._warned:
+            self._warned = True
+            _log.warning(
+                "%s 需要 %s 但调用方未提供,退化为等权",
+                type(self).__name__,
+                ", ".join(sorted(self.requires)),
+            )
 
     @abstractmethod
     def target_weights(
@@ -139,9 +153,11 @@ class ScoreWeight(Allocation):
         cov: pd.DataFrame | None = None,
     ) -> dict[str, float]:
         if not symbols or not scores:
+            self._warn_degrade()
             return _equal_weights(symbols)
         present = [scores[s] for s in symbols if s in scores]
         if not present:
+            self._warn_degrade()
             return _equal_weights(symbols)
         floor = min(present)
         span = max(present) - floor
@@ -172,6 +188,7 @@ class RiskParityWeight(Allocation):
     ) -> dict[str, float]:
         m = _cov_matrix(cov, symbols)
         if m is None:
+            self._warn_degrade()
             return _equal_weights(symbols)
         w = _risk_parity(m, self.max_iter, self.tol)
         return {s: float(w[i]) for i, s in enumerate(symbols)}
@@ -192,6 +209,7 @@ class MinVarianceWeight(Allocation):
     ) -> dict[str, float]:
         m = _cov_matrix(cov, symbols)
         if m is None:
+            self._warn_degrade()
             return _equal_weights(symbols)
         w = _solve_markowitz(m, mu=None, risk_aversion=1.0)
         return {s: float(w[i]) for i, s in enumerate(symbols)}
@@ -220,6 +238,7 @@ class MeanVarianceWeight(Allocation):
     ) -> dict[str, float]:
         m = _cov_matrix(cov, symbols)
         if m is None:
+            self._warn_degrade()
             return _equal_weights(symbols)
         mu: NDArray[np.float64] | None = None
         if scores:
