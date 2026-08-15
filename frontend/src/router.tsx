@@ -10,6 +10,7 @@ const StrategyPage = lazy(() => import('./pages/StrategyPage'))
 const PortfolioConfigPage = lazy(() => import('./pages/PortfolioConfigPage'))
 const BacktestRunPage = lazy(() => import('./pages/BacktestRunPage'))
 const SweepPage = lazy(() => import('./pages/SweepPage'))
+const WalkForwardPage = lazy(() => import('./pages/WalkForwardPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const UniversePage = lazy(() => import('./pages/UniversePage'))
 const FactorAnalysisPage = lazy(() => import('./pages/FactorAnalysisPage'))
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: 'portfolio', element: <PortfolioConfigPage /> },
       { path: 'backtest', element: <BacktestRunPage /> },
       { path: 'sweep', element: <SweepPage /> },
+      { path: 'walk', element: <WalkForwardPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

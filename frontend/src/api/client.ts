@@ -28,6 +28,7 @@ import type {
   StrategyListResponse,
   StrategyInfo,
   SweepRequest,
+  WalkForwardRequest,
   UserIndicator,
   UserIndicatorCreate,
   UserIndicatorUpdate,
@@ -173,6 +174,17 @@ export const listSweeps = async (limit = 50): Promise<JobStatus[]> =>
 
 export const getSweep = async (jobId: string): Promise<JobStatus> =>
   (await http.get(`/sweeps/${jobId}`)).data
+
+// ── Walk-Forward(H 计划)───────────────────────────────
+export const createWalkForward = async (
+  req: WalkForwardRequest,
+): Promise<JobCreated> => (await http.post('/walk-forwards', req)).data
+
+export const listWalkForwards = async (limit = 50): Promise<JobStatus[]> =>
+  (await http.get(`/walk-forwards?limit=${limit}`)).data
+
+export const getWalkForward = async (jobId: string): Promise<JobStatus> =>
+  (await http.get(`/walk-forwards/${jobId}`)).data
 
 // ── 数据 ─────────────────────────────────────────────
 export const fetchData = async (req: DataFetchRequest): Promise<unknown> =>

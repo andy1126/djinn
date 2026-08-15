@@ -62,6 +62,7 @@ const menuItems: MenuProps['items'] = [
     children: [
       { key: '/backtest', label: '运行回测' },
       { key: '/sweep', label: '参数扫描' },
+      { key: '/walk', label: 'Walk-Forward' },
       { key: '/results', label: '回测结果' },
     ],
   },
@@ -93,6 +94,7 @@ function openGroupFor(path: string): string[] {
   if (
     path.startsWith('/backtest') ||
     path.startsWith('/sweep') ||
+    path.startsWith('/walk') ||
     path.startsWith('/results')
   ) {
     return ['backtest']
@@ -170,6 +172,7 @@ export default function LayoutShell() {
                           const kindRoute: Record<string, string> = {
                             backtest: `/results/${n.jobId}`,
                             sweep: '/sweep',
+                            'walk-forward': '/walk',
                             'factor-analysis': `/factors?job=${n.jobId}`,
                             'factor-matrix': `/factor-matrix?job=${n.jobId}`,
                             screen: `/screener?job=${n.jobId}`,

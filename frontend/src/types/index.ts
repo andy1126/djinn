@@ -225,6 +225,7 @@ export interface BacktestConfig {
   output: OutputConfig
   adjust: Adjust
   risk_free_rate: number
+  walk_forward?: WalkForwardConfig | null
 }
 
 export interface BacktestRequest {
@@ -260,6 +261,50 @@ export interface SweepResultRow {
   max_drawdown?: number
   n_trades?: number
   [key: string]: unknown
+}
+
+// ── Walk-Forward(H 计划)────────────────────────────────
+export interface WalkForwardConfig {
+  is_days: number
+  oos_days: number
+  step?: number | null
+  n_windows?: number | null
+  target: string
+  grid: Record<string, (number | string)[]>
+  top_k?: number
+  min_is_sharpe?: number | null
+  warmup_days?: number
+}
+
+export interface WalkForwardRequest {
+  config: BacktestConfig
+  grid?: Record<string, (number | string)[]> | null
+  target?: string | null
+  parallel: boolean
+}
+
+/** WFO 单窗口:IS 最优参数 + OOS 评估。deployed=false 表示 IS 未达标未部署。 */
+export interface WFWindow {
+  no: number
+  is_start: string
+  is_end: string
+  oos_start: string
+  oos_end: string
+  deployed: boolean
+  best_params?: Record<string, number | string | boolean | null> | null
+  is_metrics?: Record<string, unknown> | null
+  oos_metrics?: Record<string, unknown> | null
+  oos_equity?: SeriesData | null
+}
+
+/** Walk-Forward 完整结果:逐窗口 + 拼接样本外净值 + 整体指标。 */
+export interface WalkForwardReport {
+  target: string
+  full_start: string | null
+  full_end: string | null
+  windows: WFWindow[]
+  equity_curve: SeriesData | null
+  metrics: Record<string, unknown> | null
 }
 
 export interface DataFetchRequest {
