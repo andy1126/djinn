@@ -3,6 +3,7 @@ import { Alert, Button, Card, Space, Spin, Tabs, Typography, message } from 'ant
 import { getBacktestReport, exportBacktest, errDetail } from '@/api/client'
 import MetricsCards from '@/components/MetricsCards'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import PriceTradeChart from '@/components/charts/PriceTradeChart'
 import DrawdownChart from '@/components/charts/DrawdownChart'
 import ReturnsHeatmap from '@/components/charts/ReturnsHeatmap'
 import PositionAreaChart from '@/components/charts/PositionAreaChart'
@@ -89,6 +90,15 @@ export default function ReportDetail({ jobId }: Props) {
                   <DrawdownChart drawdown={report.drawdown_curve} />
                 </Card>
               </Space>
+            ),
+          },
+          {
+            key: 'price',
+            label: '价格走势',
+            children: report.prices?.index?.length ? (
+              <PriceTradeChart prices={report.prices} trades={report.trades} />
+            ) : (
+              <Typography.Text type="secondary">无价格数据</Typography.Text>
             ),
           },
           {

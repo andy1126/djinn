@@ -150,6 +150,8 @@ def serialize_report(report: Report) -> dict[str, Any]:
         # D5:positions/weights 稀疏化(变动行),降磁盘 JSON 体积
         "positions": _df_to_sparse(report.positions),
         "weights": _df_to_sparse(report.weights),
+        # 价格序列(收盘价,每日变化,用稠密格式)
+        "prices": _df_to_dict(report.prices),
         "attribution": report.attribution,
         "factor_exposure": report.factor_exposure,
         "v": 2,
@@ -300,6 +302,7 @@ def rebuild_report(payload: dict[str, Any]) -> Report:
         rejections=rejections,
         positions=positions_df,
         weights=weights_df,
+        prices=_df_from_dict(payload.get("prices") or {}),
         symbols=payload.get("symbols") or [],
         attribution=payload.get("attribution"),
         factor_exposure=payload.get("factor_exposure"),

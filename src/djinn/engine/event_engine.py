@@ -74,6 +74,9 @@ class BacktestResult:
     cash_curve: pd.Series
     positions_curve: pd.DataFrame  # index=交易日, columns=symbol, value=股数
     weights_curve: pd.DataFrame
+    prices_curve: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame()
+    )  # index=交易日, columns=symbol, value=收盘价(mark-to-market 口径)
     trades: list[Fill] = field(default_factory=list)
     rejections: list[Rejection] = field(default_factory=list)
     account: Account | None = None
@@ -170,6 +173,7 @@ class EventDrivenEngine:
         cash_hist: list[float] = []
         positions_hist: list[dict[str, float]] = []
         weights_hist: list[dict[str, float]] = []
+        prices_hist: list[dict[str, float]] = []
         ts_hist: list[date] = []
 
         allocation = cfg.allocation or make_allocation("equal")
@@ -328,6 +332,7 @@ class EventDrivenEngine:
                 w_snapshot[s] = w_all.get(s, 0.0)
             positions_hist.append(pos_snapshot)
             weights_hist.append(w_snapshot)
+            prices_hist.append({s: prices_mtm.get(s, 0.0) for s in symbols})
             ts_hist.append(ts_date)
 
             # 更新 prev_close 与最近行情日期(A9 退市判定)
@@ -342,6 +347,7 @@ class EventDrivenEngine:
         cash_curve = pd.Series(cash_hist, index=idx, name="cash", dtype=float)
         positions_df = pd.DataFrame(positions_hist, index=idx).astype(float)
         weights_df = pd.DataFrame(weights_hist, index=idx).astype(float)
+        prices_df = pd.DataFrame(prices_hist, index=idx).astype(float)
 
         benchmark_curve: pd.Series | None = None
         if benchmark is not None:
@@ -355,6 +361,7 @@ class EventDrivenEngine:
             cash_curve=cash_curve,
             positions_curve=positions_df,
             weights_curve=weights_df,
+            prices_curve=prices_df,
             trades=list(broker.fills),
             rejections=list(broker.rejections),
             account=account,

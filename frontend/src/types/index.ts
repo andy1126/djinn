@@ -363,6 +363,7 @@ export interface BacktestReport {
   rejections: Record<string, number | string>[]
   positions: DataFrameData
   weights: DataFrameData
+  prices: DataFrameData
   attribution: BrinsonResult | null
   factor_exposure: FactorExposureReport | null
 }

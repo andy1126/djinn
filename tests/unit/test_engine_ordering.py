@@ -250,3 +250,25 @@ def test_engine_rejects_cov_allocation():
     )
     with pytest.raises(ValueError, match="FactorPortfolioStrategy"):
         EventDrivenEngine(cfg).run(_Hold(), {"A": _md("A", [50.0] * 3)})
+
+
+def test_prices_curve_recorded_and_serialized():
+    """价格走势数据:引擎记录每日收盘价,报告序列化含 prices(供前端买卖点图)。"""
+
+    class _Hold(Strategy):
+        def on_bar(self, ctx) -> None:  # type: ignore[override]
+            return
+
+    prices = [50.0 + i for i in range(40)]
+    result = EventDrivenEngine(_engine(100000.0)).run(_Hold(), {"S": _md("S", prices)})
+    # index=交易日、columns=symbol、末值=最后收盘价
+    assert result.prices_curve.shape == (40, 1)
+    assert list(result.prices_curve.columns) == ["S"]
+    assert result.prices_curve["S"].iloc[-1] == pytest.approx(89.0)
+
+    from djinn.analytics.report import build_report
+    from djinn.api.report_store import serialize_report
+
+    payload = serialize_report(build_report(result))
+    assert payload["prices"]["columns"] == ["S"]
+    assert len(payload["prices"]["index"]) == 40

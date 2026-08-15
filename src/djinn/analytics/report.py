@@ -45,6 +45,9 @@ class Report:
     rejections: list[Any] = field(default_factory=list)
     positions: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
     weights: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
+    prices: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame()
+    )  # index=交易日, columns=symbol, value=收盘价(mark-to-market 口径)
     config: dict[str, Any] = field(default_factory=dict)
     symbols: list[str] = field(default_factory=list)
     # ── 归因(Phase 5,可选;``run_backtest(with_attribution=True)`` 填充)──
@@ -103,6 +106,7 @@ def build_report(
         rejections=result.rejections,
         positions=result.positions_curve,
         weights=result.weights_curve,
+        prices=result.prices_curve,
         symbols=result.symbols,
         config={
             "initial_cash": float(result.config.initial_cash) if result.config else 0.0
