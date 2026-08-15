@@ -421,14 +421,40 @@ export default function UniversePage() {
                 {indexNames[index] || index} · {indexComps.data?.count ?? 0} 只
               </Typography.Text>
               <Row gutter={[8, 8]}>
-                {(indexComps.data?.symbols || []).slice((compPage - 1) * 100, compPage * 100).map((s, i) => (
-                  <Col xs={12} sm={8} lg={6} key={s}>
-                    <Typography.Text code>{s}</Typography.Text>
-                    <Typography.Text type="secondary" style={{ marginLeft: 6 }}>
-                      {indexComps.data?.names?.[(compPage - 1) * 100 + i] || ''}
-                    </Typography.Text>
-                  </Col>
-                ))}
+                {(indexComps.data?.symbols || []).slice((compPage - 1) * 100, compPage * 100).map((s, i) => {
+                  const notIn = profileList.filter((pf) => !pf.symbols.includes(s))
+                  const name = indexComps.data?.names?.[(compPage - 1) * 100 + i] || ''
+                  return (
+                    <Col xs={24} sm={12} lg={8} key={s}>
+                      <Card
+                        size="small"
+                        title={<Typography.Text code style={{ fontSize: 13 }}>{s}</Typography.Text>}
+                        extra={
+                          <Dropdown
+                            menu={{
+                              items: notIn.map((pf) => ({ key: pf.profile_id, label: pf.name })),
+                              onClick: ({ key }) => onAddToProfile(key, s),
+                            }}
+                            disabled={notIn.length === 0}
+                            trigger={['click']}
+                          >
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<PlusOutlined />}
+                              title="加入 Profile"
+                              aria-label={`加入 ${s} 到 Profile`}
+                            />
+                          </Dropdown>
+                        }
+                      >
+                        <Typography.Text ellipsis style={{ fontSize: 14 }}>
+                          {name || '—'}
+                        </Typography.Text>
+                      </Card>
+                    </Col>
+                  )
+                })}
               </Row>
               {(indexComps.data?.symbols?.length || 0) > 100 && (
                 <Pagination
