@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography,
+  Alert, Button, Card, Col, DatePicker, Form, InputNumber, message, Progress, Row, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography,
 } from 'antd'
 import { QuestionCircleOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
@@ -23,6 +23,9 @@ import QueryErrorAlert from '@/components/QueryErrorAlert'
 import { CORR_MATRIX_TIP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
+
+/** 宽基指数卡片的市场中文标签。 */
+const MARKET_LABEL: Record<string, string> = { CN: 'A股', US: '美股', HK: '港股' }
 
 interface FormValues {
   index?: string
@@ -83,7 +86,6 @@ export default function FactorMatrixPage() {
     for (const i of indexes) m[i.key] = i
     return m
   }, [indexes])
-  const indexOptions = indexes.map((i) => ({ value: i.key, label: `${i.key} · ${i.name}` }))
   const watchIndex = Form.useWatch('index', form)
   const indexMarket = watchIndex ? indexByKey[watchIndex]?.market : undefined
   const isValuation = (f: FactorInfo) => f.category === 'value' || f.category === 'size'
@@ -266,7 +268,35 @@ export default function FactorMatrixPage() {
           initialValues={{ index: 'CSI300', ic_method: 'spearman', orthogonalized: false }}
         >
           <Form.Item name="index" label="宽基指数">
-            <Select options={indexOptions} showSearch optionFilterProp="label" />
+            <Row gutter={[8, 8]}>
+              {indexes.map((i) => {
+                const selected = watchIndex === i.key
+                return (
+                  <Col key={i.key} xs={12} sm={8} lg={6}>
+                    <Card
+                      size="small"
+                      hoverable
+                      onClick={() => form.setFieldValue('index', i.key)}
+                      style={{
+                        borderColor: selected ? '#1677ff' : undefined,
+                        cursor: 'pointer',
+                        background: selected ? 'rgba(22,119,255,0.06)' : undefined,
+                      }}
+                    >
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <Typography.Text strong>{i.key}</Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {i.name}
+                        </Typography.Text>
+                        <Tag color={selected ? 'blue' : 'default'}>
+                          {MARKET_LABEL[i.market] || i.market}
+                        </Tag>
+                      </Space>
+                    </Card>
+                  </Col>
+                )
+              })}
+            </Row>
           </Form.Item>
           {indexMarket === 'CN' && (
             <Alert
