@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Space, Spin, Tabs, Typography, message } from 'antd'
 import { getBacktestReport, exportBacktest, errDetail } from '@/api/client'
@@ -22,12 +21,6 @@ export default function ReportDetail({ jobId }: Props) {
     queryFn: () => getBacktestReport(jobId),
     retry: 1,
   })
-
-  // F10:报告挂载后自身滚入视野(替代 DashboardPage 的 setTimeout 定时滚动)
-  const rootRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [jobId])
 
   const onExport = async (fmt: 'csv' | 'excel') => {
     try {
@@ -62,7 +55,6 @@ export default function ReportDetail({ jobId }: Props) {
   if (!report) return null
 
   return (
-    <div ref={rootRef}>
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card
         title={`回测结果 ${jobId}`}
@@ -144,6 +136,5 @@ export default function ReportDetail({ jobId }: Props) {
         ]}
       />
     </Space>
-    </div>
   )
 }

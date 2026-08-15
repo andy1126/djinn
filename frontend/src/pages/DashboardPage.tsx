@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Empty, Popconfirm, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -58,6 +58,15 @@ export default function DashboardPage() {
     setDetailJobId(id)
     setActiveTab('detail')
   }
+
+  // 点击「查看结果」/ 深链进入详情时滚动到结果区。
+  // 结果区(Card)常驻渲染,不依赖报告加载完成;依赖 detailJobId/activeTab 在 render 提交后触发。
+  const resultRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (detailJobId && activeTab === 'detail') {
+      resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [detailJobId, activeTab])
 
   const columns = [
     {
@@ -160,7 +169,7 @@ export default function DashboardPage() {
         />
       </Card>
 
-      <div>
+      <div ref={resultRef}>
         <Card>
           <Tabs
             activeKey={activeTab}
