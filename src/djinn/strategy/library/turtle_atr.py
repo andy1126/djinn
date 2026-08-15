@@ -47,11 +47,7 @@ class TurtleATR(Strategy):
                 self._long[s] = True
                 # 经典海龟:weight = risk_per_unit × price / N(N = ATR 值)。
                 # 旧实现多除一个 atr_period(ATR 已按该窗口算得),仓位被缩小 atr_period 倍。
-                w = (
-                    min(1.0, float(self.risk_per_unit) * price / a)
-                    if a > 0
-                    else 1.0
-                )
+                w = min(1.0, float(self.risk_per_unit) * price / a) if a > 0 else 1.0
                 ctx.order_target_percent(s, w)
             elif is_long and price < ll:
                 self._long[s] = False

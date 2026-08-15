@@ -74,8 +74,7 @@ class ProfileRegistry:
 
     def _init_db(self) -> None:
         with self._lock, self._conn() as c:
-            c.execute(
-                """
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS profiles (
                     profile_id TEXT PRIMARY KEY,
                     name       TEXT NOT NULL UNIQUE,
@@ -84,8 +83,7 @@ class ProfileRegistry:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-                """
-            )
+                """)
             c.commit()
 
     def _now(self) -> str:

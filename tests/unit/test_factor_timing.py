@@ -523,9 +523,7 @@ def test_icir_no_window_starvation() -> None:
     days = pd.bdate_range("2024-01-01", periods=300)
     # 不同斜率 → 动量截面有信号 → ICIR 应产出非零权重
     data = {
-        s: _md(
-            s, {d: 100.0 + j * (0.1 + i * 0.05) for j, d in enumerate(days)}
-        )
+        s: _md(s, {d: 100.0 + j * (0.1 + i * 0.05) for j, d in enumerate(days)})
         for i, s in enumerate(["A", "B", "C"])
     }
     strat = FactorPortfolioStrategy(
