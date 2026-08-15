@@ -14,6 +14,7 @@ from djinn.data.fundamentals import asof_snapshot
 from djinn.data.providers.fundamentals_router import FundamentalsRouter
 from djinn.data.schema import (
     COL_ANNOUNCE_DATE,
+    COL_DIVIDEND,
     COL_MARKET_CAP,
     COL_PB,
     COL_PE,
@@ -149,6 +150,11 @@ class _DailyValSource:
         pe = [10.0] * (n // 2) + [20.0] * (n - n // 2)
         return pd.DataFrame({COL_PE: pe}, index=idx)
 
+    def get_daily_dividends(
+        self, symbol: str, start: date, end: date, market=None
+    ) -> pd.DataFrame:
+        return pd.DataFrame()
+
 
 def test_normalize_valuation() -> None:
     """``stock_a_indicator_lg`` 原始列 → 规范化(pe/pb/ps,index=交易日)。"""
@@ -213,6 +219,9 @@ def test_fundamental_panels_fetch_once_per_symbol() -> None:
         def get_daily_valuation(self, symbol, start, end, market=None):
             return pd.DataFrame()
 
+        def get_daily_dividends(self, symbol, start, end, market=None):
+            return pd.DataFrame()
+
         def get_snapshot(self, symbols, when, market=None):
             return pd.DataFrame(index=symbols)
 
@@ -228,6 +237,57 @@ def test_fundamental_panels_fetch_once_per_symbol() -> None:
     assert sorted(src.symbols_seen) == ["A", "B"]
     assert panels["roe"]["A"].notna().all()
     assert panels["gross_margin"]["B"].notna().all()
+
+
+def test_daily_dividends_panel_zero_fill() -> None:
+    """COL_DIVIDEND 面板:事件序列 reindex 到交易日,缺日填 0。"""
+    from djinn.factor.engine import FactorEngine
+
+    class _DividendSource:
+        name = "stub"
+
+        def get_snapshot(self, symbols, when, market=None):
+            return pd.DataFrame(index=symbols)
+
+        def get_history(self, symbol, start, end, market=None):
+            return pd.DataFrame()
+
+        def get_daily_valuation(self, symbol, start, end, market=None):
+            return pd.DataFrame()
+
+        def get_daily_dividends(self, symbol, start, end, market=None):
+            # 区间末日派息 0.5
+            return pd.DataFrame({COL_DIVIDEND: [0.5]}, index=[pd.Timestamp(end)])
+
+    eng = FactorEngine()
+    start, end = date(2024, 1, 2), date(2024, 1, 31)
+    trading_index = pd.DatetimeIndex(pd.bdate_range(start, end))
+    panels = eng._fundamental_panels(
+        (COL_DIVIDEND,), ["S"], trading_index, start, end, _DividendSource(), Market.CN
+    )
+    div = panels[COL_DIVIDEND]["S"]
+    assert div.iloc[0] == 0.0  # 缺日填 0
+    assert div.iloc[-1] == pytest.approx(0.5)  # 末日派息
+    assert div.sum() == pytest.approx(0.5)  # 全区间仅一次派息
+
+
+def test_normalize_dividends_filters_proposal() -> None:
+    """``stock_history_dividend_detail`` → 规范化:仅保留「实施」+ 有效除息日 + ÷10。"""
+    from djinn.data.providers.akshare import AkShareProvider
+
+    raw = pd.DataFrame(
+        {
+            "公告日期": ["2024-01-01", "2024-06-01", "2023-06-01"],
+            "送股": [0, 0, 0],
+            "转增": [0, 0, 0],
+            "派息": [5.0, 6.0, 4.0],  # 每 10 股口径 → 每股 0.5 / 0.6
+            "进度": ["实施", "实施", "预案"],  # 预案过滤掉
+            "除权除息日": ["2024-01-10", "2024-06-10", "2023-06-10"],
+        }
+    )
+    out = AkShareProvider._normalize_dividends(raw)
+    assert list(out.index) == [pd.Timestamp("2024-01-10"), pd.Timestamp("2024-06-10")]
+    assert out[COL_DIVIDEND].tolist() == [0.5, 0.6]
 
 
 # ── 真实 akshare(需网络)─────────────────────────────────

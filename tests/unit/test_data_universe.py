@@ -41,6 +41,25 @@ def test_universe_index_map_dowjones() -> None:
     assert UNIVERSE_INDEX_MAP["DOWJONES"]["name"] == "道琼斯工业指数"
 
 
+def test_universe_index_map_cn_additions() -> None:
+    """新增 A 股宽基指数映射到 akshare 新浪代码。"""
+    expected = {
+        "SSE50": "000016",
+        "STAR50": "000688",
+        "CHINEXT": "399006",
+        "CSI1000": "000852",
+    }
+    for key, code in expected.items():
+        assert UNIVERSE_INDEX_MAP[key]["market"] is Market.CN
+        assert UNIVERSE_INDEX_MAP[key]["akshare"] == code
+
+
+def test_universe_index_map_hstech_etf_proxy() -> None:
+    """恒生科技走 ETF 持仓代理(带 etf 键)。"""
+    assert UNIVERSE_INDEX_MAP["HSTECH"]["market"] is Market.HK
+    assert UNIVERSE_INDEX_MAP["HSTECH"]["etf"] == "3067.HK"
+
+
 def test_cache_dtype_keys_distinct() -> None:
     """dtype 维度让 quote / fundamental / universe 键互不冲突。"""
     k_quote = DataCache.make_key("akshare", "X", Adjust.BACKWARD, dtype="quote")

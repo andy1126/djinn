@@ -1,8 +1,15 @@
-"""价值因子:EP / BP / SP(估值倒数,越高越便宜)。"""
+"""价值因子:EP / BP / SP(估值倒数,越高越便宜)+ 股息率。"""
 
 from __future__ import annotations
 
-from djinn.data.schema import COL_MARKET_CAP, COL_OCF, COL_PB, COL_PE, COL_PS
+from djinn.data.schema import (
+    COL_DIVIDEND,
+    COL_MARKET_CAP,
+    COL_OCF,
+    COL_PB,
+    COL_PE,
+    COL_PS,
+)
 from djinn.factor.base import Factor, Panel, PanelDict
 from djinn.factor.library._util import fund_panel
 
@@ -65,3 +72,22 @@ class CFPFactor(Factor):
         ocf = fund_panel(fundamentals, COL_OCF, prices)
         cap = fund_panel(fundamentals, COL_MARKET_CAP, prices)
         return ocf / cap.where(cap > 0)
+
+
+class DividendYieldFactor(Factor):
+    """股息率 = 近 12 个月每股现金分红(税前)/ 收盘价。
+
+    分红为事件型序列(除息日生效),``fundamentals[COL_DIVIDEND]`` 是「每股现金/
+    交易日」面板(缺日 0);TTM 用 ``rolling('365D')`` 滚动求和。无分红 → 0。
+    """
+
+    name = "div_yield"
+    category = "value"
+    required_fundamentals = (COL_DIVIDEND,)
+
+    def compute(
+        self, prices: Panel, ohlcv: PanelDict, fundamentals: PanelDict
+    ) -> Panel:
+        dividend = fund_panel(fundamentals, COL_DIVIDEND, prices)
+        ttm = dividend.rolling("365D", min_periods=1).sum()
+        return ttm / prices.where(prices > 0)

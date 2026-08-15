@@ -108,3 +108,14 @@ class FundamentalsSource(ABC):
         DataFrame(不支持);provider / 路由器按需覆写。
         """
         return pd.DataFrame()
+
+    def get_daily_dividends(
+        self, symbol: str, start: date, end: date, market: Market | None = None
+    ) -> pd.DataFrame:
+        """返回单标的在 [start, end] 的每股现金分红事件序列(股息率因子回看)。
+
+        语义:分红是**事件型日频序列**(除息日生效),index=除息日,含 ``COL_DIVIDEND``
+        列(每股现金分红,税前)。供股息率因子做 TTM 滚动求和。基类默认返回空
+        DataFrame(不支持);provider / 路由器按需覆写。
+        """
+        return pd.DataFrame()

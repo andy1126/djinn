@@ -125,6 +125,13 @@ class DataProvider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} 不支持 get_daily_valuation")
 
+    def get_daily_dividends(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        """单标的每股现金分红事件序列(index=除息日,columns 含 ``dividend``)。
+
+        仅部分 provider(akshare 新浪 / yfinance)支持,其余抛 NotImplementedError。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 不支持 get_daily_dividends")
+
     def get_profile(self, symbol: str, market: Market | None = None) -> dict[str, Any]:
         """单标的扩展档案(估值扩展/盈利质量/财务健康/分析师/公司概况等)。
 

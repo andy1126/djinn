@@ -591,6 +591,61 @@ class AkShareProvider(DataProvider):
             )
         return out.sort_index()
 
+    # ── 每股现金分红(股息率因子)─────────────────────────
+    def get_daily_dividends(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        """单标的每股现金分红事件序列(index=除息日,``dividend`` 列)。
+
+        新浪源(与项目 A 股行情源一致,东财不可达):``stock_history_dividend_detail``
+        一次返回全部历史分红,整帧缓存后按区间切片(分红为静态历史,复用 ``finhist_``
+        式的落盘缓存)。
+        """
+        code = _normalize_ak_code(symbol)
+        cache_symbol = f"dividends_{code}"
+        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        if cached is not None and len(cached):
+            cached.index = pd.to_datetime(cached.index)
+            return cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+        try:
+            import akshare as ak
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError(
+                "akshare 未安装,请执行 uv pip install -e '.[akshare]'"
+            ) from e
+        self._throttle()
+        _log.info("akshare 拉取 %s 历史分红 stock_history_dividend_detail", code)
+        try:
+            raw = ak.stock_history_dividend_detail(
+                symbol=code, indicator="分红", date=""
+            )
+        except Exception as e:
+            raise ProviderError(f"akshare 拉取 {symbol} 分红失败: {e}") from e
+        if raw is None or len(raw) == 0:
+            return pd.DataFrame()
+        df = self._normalize_dividends(raw)
+        if len(df):
+            self.cache.put_fundamentals(self.name, cache_symbol, df)
+        return df.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+
+    @staticmethod
+    def _normalize_dividends(raw: pd.DataFrame) -> pd.DataFrame:
+        """``stock_history_dividend_detail`` → 规范化(index=除息日,``dividend`` 列)。
+
+        仅保留「实施」且除权除息日有效的记录;新浪 ``派息(税前)`` 是**每 10 股**
+        口径,需 ÷10 得每股现金分红(元);同日多笔(罕见)求和去重。
+        """
+        df = raw.copy()
+        if "进度" in df.columns:
+            df = df[df["进度"] == "实施"]
+        if "除权除息日" not in df.columns or "派息" not in df.columns:
+            return pd.DataFrame()
+        ex = pd.to_datetime(df["除权除息日"], errors="coerce")
+        cash = pd.to_numeric(df["派息"], errors="coerce") / 10.0
+        out = pd.DataFrame({COL_DIVIDEND: cash.to_numpy()}, index=ex)
+        out = out.dropna(subset=[COL_DIVIDEND]).sort_index()
+        if out.index.has_duplicates:
+            out = out.groupby(level=0).sum()
+        return out
+
     def search_symbols(
         self, query: str, market: Market | None = None
     ) -> list[tuple[str, str]]:

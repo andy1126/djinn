@@ -365,6 +365,36 @@ class YahooProvider(DataProvider):
         out[COL_ANNOUNCE_DATE] = pd.DatetimeIndex(periods) + pd.Timedelta(days=45)
         return out.sort_index()
 
+    def get_daily_dividends(
+        self, symbol: str, start: date, end: date, market: Market | None = None
+    ) -> pd.DataFrame:
+        """单标的每股现金分红事件序列(index=除息日,``dividend`` 列)。
+
+        用 ``yf.Ticker(symbol).dividends``(美股 / 港股 ``.HK`` 均可);分红为静态
+        历史,整帧落盘缓存后按区间切片。空历史返回空帧(由调用方退化)。
+        """
+        cache_symbol = f"dividends_{symbol}"
+        cached = self.cache.get_fundamentals(self.name, cache_symbol)
+        if cached is not None and len(cached):
+            cached.index = pd.to_datetime(cached.index)
+            return cached.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        self._throttle()
+        try:
+            div = yf.Ticker(symbol).dividends
+        except Exception as e:
+            raise ProviderError(f"yfinance 拉取 {symbol} 分红失败: {e}") from e
+        if div is None or len(div) == 0:
+            return pd.DataFrame()
+        cash = pd.to_numeric(div, errors="coerce")
+        cash.index = pd.to_datetime(cash.index).tz_localize(None)
+        out = pd.DataFrame({COL_DIVIDEND: cash}).sort_index()
+        self.cache.put_fundamentals(self.name, cache_symbol, out)
+        return out.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+
     def _throttle(self) -> None:
         if self.rate_limit_sec <= 0:
             return
@@ -394,6 +424,13 @@ class YahooProvider(DataProvider):
                 cached = None
             else:
                 return [str(s) for s in cached["symbol"].tolist()]
+        # 恒生科技等无 yfiua 覆盖的指数:用追踪 ETF 持仓代理(yfinance 仅暴露前十大)
+        if meta.get("etf"):
+            symbols, names = self._etf_holdings(str(meta["etf"]))
+            self.cache.put_universe(
+                self.name, cache_name, pd.DataFrame({"symbol": symbols, "name": names})
+            )
+            return symbols
         url = f"https://yfiua.github.io/index-constituents/constituents-{index.lower()}.csv"
         self._throttle()
         _log.info("yahoo 拉取指数 %s 成分: %s", index, url)
@@ -436,6 +473,33 @@ class YahooProvider(DataProvider):
             self.name, cache_name, pd.DataFrame({"symbol": symbols, "name": names})
         )
         return symbols
+
+    def _etf_holdings(self, etf_symbol: str) -> tuple[list[str], list[str]]:
+        """用追踪 ETF 的前十大持仓当指数成分(恒生科技代理)。
+
+        yfinance 的 ``funds_data`` 只暴露 ``top_holdings``(前十大),拿不到完整
+        持仓;对 ~30 只的恒生科技这是近似(覆盖权重最大的前 10 只)。
+        """
+        try:
+            import yfinance as yf
+        except ImportError as e:  # pragma: no cover
+            raise ProviderError("yfinance 未安装") from e
+        self._throttle()
+        try:
+            th = yf.Ticker(etf_symbol).funds_data.top_holdings
+        except Exception as e:
+            raise ProviderError(f"yfinance 拉取 {etf_symbol} 持仓失败: {e}") from e
+        if th is None or len(th) == 0:
+            raise DataError(f"yfinance {etf_symbol} 持仓为空")
+        symbols: list[str] = []
+        names: list[str] = []
+        for sym, row in th.iterrows():
+            s = _hk_symbol(str(sym).strip())
+            if not s:
+                continue
+            symbols.append(s)
+            names.append(str(row.get("Name", "") or "").strip())
+        return symbols, names
 
     def get_index_component_names(self, index: str) -> dict[str, str]:
         """指数成分 symbol → 名称映射(与 :meth:`get_index_components` 同源)。"""
@@ -574,6 +638,23 @@ def _float_cap(info: dict[str, Any]) -> float:
 def _safe_div(num: pd.Series, den: pd.Series) -> pd.Series:
     """逐项除法,除零 / 非法 → NaN(抑制 inf)。"""
     return (num / den).replace([float("inf"), float("-inf")], float("nan"))
+
+
+def _hk_symbol(sym: str) -> str:
+    """ETF 持仓里的港股符号 → 标准 ``.HK`` 后缀。
+
+    yfinance ``top_holdings`` 的港股符号不一致:多数带 ``.HK``(如 ``0700.HK``),
+    少数是纯数字 5 位代码(如 ``01211``)。统一为 Yahoo 4 位代码 + ``.HK``。
+    """
+    s = sym.strip()
+    if not s:
+        return ""
+    if s.upper().endswith(".HK"):
+        return s
+    if s.isdigit():
+        code = s.lstrip("0") or "0"
+        return f"{code.zfill(4)}.HK"
+    return s
 
 
 # 股票详情扩展字段:info 键 → 规范化字段名(百分比字段用 _pct,其余用 _fnum)。

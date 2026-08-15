@@ -18,7 +18,13 @@ from djinn.factor.library.quality import (
     ROEFactor,
 )
 from djinn.factor.library.size import SizeFactor
-from djinn.factor.library.value import BPFactor, CFPFactor, EPFactor, SPFactor
+from djinn.factor.library.value import (
+    BPFactor,
+    CFPFactor,
+    DividendYieldFactor,
+    EPFactor,
+    SPFactor,
+)
 from djinn.factor.library.volatility import (
     BetaFactor,
     DownsideVolatilityFactor,
@@ -44,6 +50,7 @@ FACTOR_REGISTRY: dict[str, type[Factor]] = {
     "bp": BPFactor,
     "sp": SPFactor,
     "cfp": CFPFactor,
+    "div_yield": DividendYieldFactor,
     "roe": ROEFactor,
     "gross_margin": GrossMarginFactor,
     "net_profit_margin": NetProfitMarginFactor,
@@ -75,6 +82,7 @@ __all__ = [
     "BetaFactor",
     "CFPFactor",
     "DownsideVolatilityFactor",
+    "DividendYieldFactor",
     "EPFactor",
     "FACTOR_REGISTRY",
     "GrossMarginFactor",

@@ -147,6 +147,7 @@ def test_new_factors_registered() -> None:
         "accruals",
         "asset_growth",
         "cfp",
+        "div_yield",
     ]
     for name in new_names:
         assert name in FACTOR_REGISTRY, name
@@ -178,6 +179,32 @@ def test_value_factor_reciprocal() -> None:
     pe_neg = pd.DataFrame({"A": [-5.0] * 10}, index=prices.index)
     out_neg = f.compute(prices, {}, {COL_PE: pe_neg})
     assert out_neg["A"].isna().all()
+
+
+def test_div_yield_factor() -> None:
+    """C7 股息率 = 近 12 个月每股现金分红(TTM)/ 收盘价。"""
+    from djinn.data.schema import COL_DIVIDEND
+
+    prices = _prices({"A": [10.0] * 10})
+    # 第 5 日派息 0.5 元/股,其余日 0
+    div = pd.DataFrame({"A": [0.0] * 10}, index=prices.index)
+    div.iloc[5, 0] = 0.5
+    f = make_factor("div_yield")
+    out = f.compute(prices, {}, {COL_DIVIDEND: div})
+    # 派息日前 TTM=0;派息日及之后 TTM=0.5 → 股息率 0.05
+    assert out["A"].iloc[:5].eq(0.0).all()
+    assert out["A"].iloc[5] == pytest.approx(0.5 / 10.0)
+    assert out["A"].iloc[-1] == pytest.approx(0.5 / 10.0)
+
+
+def test_div_yield_no_dividend_is_zero() -> None:
+    """无分红记录 → 股息率为 0(而非 NaN)。"""
+    from djinn.data.schema import COL_DIVIDEND
+
+    prices = _prices({"A": [10.0] * 10})
+    div = pd.DataFrame({"A": [0.0] * 10}, index=prices.index)
+    out = make_factor("div_yield").compute(prices, {}, {COL_DIVIDEND: div})
+    assert out["A"].eq(0.0).all()
 
 
 def test_net_profit_margin_nonzero() -> None:
@@ -287,6 +314,7 @@ def test_factor_required_declarations_complete() -> None:
         "COL_PROFIT_YOY",
         "COL_MARKET_CAP",
         "COL_FLOAT_CAP",
+        "COL_DIVIDEND",
     }
     ohlcv_cols = {"COL_AMOUNT", "COL_OPEN", "COL_HIGH", "COL_LOW", "COL_VOLUME"}
     col_values = {n: getattr(schema, n) for n in dir(schema) if n.startswith("COL_")}

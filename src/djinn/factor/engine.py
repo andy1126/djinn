@@ -24,6 +24,7 @@ from djinn.data.provider import ProviderRegistry
 from djinn.data.schema import (
     COL_AMOUNT,
     COL_CLOSE,
+    COL_DIVIDEND,
     COL_HIGH,
     COL_LOW,
     COL_OPEN,
@@ -54,6 +55,7 @@ DEFAULT_FUNDAMENTAL_FIELDS: tuple[str, ...] = (
     "total_assets",
     "revenue_yoy",
     "profit_yoy",
+    COL_DIVIDEND,
 )
 
 _HISTORY_LOOKBACK_DAYS = 400
@@ -231,11 +233,12 @@ class FactorEngine:
         source: FundamentalsSource,
         market: Market | None,
     ) -> PanelDict:
-        # C15:按标的各取一次财报时序 + 日频估值,再按字段 asof 对齐;
+        # C15:按标的各取一次财报时序 + 日频估值 + 分红事件,再按字段 asof 对齐;
         # 消除"按字段循环对每个标的重复拉取"的 ×N 冗余(财报时序被拉 9 遍)。
         hist_start = start - timedelta(days=_HISTORY_LOOKBACK_DAYS)
         histories: dict[str, pd.DataFrame] = {}
         valuations: dict[str, pd.DataFrame] = {}
+        dividends: dict[str, pd.DataFrame] = {}
         for sym in universe:
             histories[sym] = _safe_frame(
                 source.get_history, sym, hist_start, end, market
@@ -243,9 +246,20 @@ class FactorEngine:
             valuations[sym] = _safe_frame(
                 source.get_daily_valuation, sym, start, end, market
             )
+            dividends[sym] = _safe_frame(
+                source.get_daily_dividends, sym, hist_start, end, market
+            )
         return {
             f: self._asof_field_panel(
-                f, universe, trading_index, end, source, market, histories, valuations
+                f,
+                universe,
+                trading_index,
+                end,
+                source,
+                market,
+                histories,
+                valuations,
+                dividends,
             )
             for f in fields
         }
@@ -260,6 +274,7 @@ class FactorEngine:
         market: Market | None,
         histories: dict[str, pd.DataFrame],
         valuations: dict[str, pd.DataFrame],
+        dividends: dict[str, pd.DataFrame],
     ) -> Panel:
         """单基本面字段的 point-in-time 宽表(输入为已预取的 per-symbol 时序)。
 
@@ -282,6 +297,18 @@ class FactorEngine:
                     .reindex(trading_index)
                     .ffill()
                 )
+            # 分红字段:事件型序列(除息日 → 每股现金),reindex 到交易日,缺日填 0
+            div = dividends.get(sym)
+            if (
+                field == COL_DIVIDEND
+                and div is not None
+                and len(div)
+                and field in div.columns
+            ):
+                cash = pd.to_numeric(div[field], errors="coerce")
+                if cash.index.has_duplicates:
+                    cash = cash.groupby(level=0).sum()
+                series = cash.reindex(trading_index).fillna(0.0)
             if series is None:
                 hist = histories.get(sym)
                 if (

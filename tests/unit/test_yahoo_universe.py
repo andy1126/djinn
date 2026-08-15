@@ -274,3 +274,55 @@ def test_yahoo_index_components_sp500_real() -> None:
     p = YahooProvider()
     cons = p.get_index_components("SP500")
     assert len(cons) >= 490
+
+
+# ── 恒生科技 ETF 持仓代理 ───────────────────────────────
+
+
+def test_hk_symbol_normalization() -> None:
+    """港股持仓符号 → 标准 .HK 后缀(纯数字 5 位代码去前导零补 4 位)。"""
+    from djinn.data.providers.yahoo import _hk_symbol
+
+    assert _hk_symbol("0700.HK") == "0700.HK"  # 已带 .HK 原样
+    assert _hk_symbol("01211") == "1211.HK"  # 5 位代码 → 4 位 + .HK
+    assert _hk_symbol("00700") == "0700.HK"  # 去前导零补 4 位
+    assert _hk_symbol("9988.HK") == "9988.HK"
+    assert _hk_symbol("") == ""
+
+
+def test_hstech_etf_holdings(monkeypatch, tmp_path) -> None:
+    """HSTECH 走 ETF 持仓代理(``funds_data.top_holdings`` 前十大)。"""
+    import sys
+    import types
+
+    class _TopHoldings:
+        pass
+
+    class _FundsData:
+        @property
+        def top_holdings(self) -> pd.DataFrame:
+            return pd.DataFrame(
+                {
+                    "Name": ["Tencent Holdings Ltd", "BYD Co Ltd Class H"],
+                    "Holding Percent": [0.085, 0.084],
+                },
+                index=["0700.HK", "01211"],
+            )
+
+    class _ETFTicker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        @property
+        def funds_data(self) -> _FundsData:
+            return _FundsData()
+
+    monkeypatch.setitem(
+        sys.modules, "yfinance", types.SimpleNamespace(Ticker=_ETFTicker)
+    )
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path), rate_limit_sec=0.0)
+    cons = p.get_index_components("HSTECH")
+    assert cons == ["0700.HK", "1211.HK"]  # 01211 → 1211.HK 归一
+    names = p.get_index_component_names("HSTECH")
+    assert names["0700.HK"] == "Tencent Holdings Ltd"
+    assert names["1211.HK"] == "BYD Co Ltd Class H"

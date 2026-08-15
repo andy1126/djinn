@@ -163,6 +163,28 @@ class FundamentalsRouter(FundamentalsSource):
                 return daily
         return pd.DataFrame()
 
+    def get_daily_dividends(
+        self, symbol: str, start: date, end: date, market: Market | None = None
+    ) -> pd.DataFrame:
+        """单标的每股现金分红事件序列(按 provider 优先级路由,同估值)。"""
+        m = market or detect_market(symbol)
+        for provider in self._providers:
+            try:
+                if not provider.supports(symbol, m):
+                    continue
+            except Exception:
+                continue
+            try:
+                daily = provider.get_daily_dividends(symbol, start, end)
+            except NotImplementedError:
+                continue
+            except Exception as e:
+                _log.debug("%s 分红 %s 失败: %s", provider.name, symbol, e)
+                continue
+            if daily is not None and len(daily):
+                return daily
+        return pd.DataFrame()
+
     # ── 便捷:行业 / 市值代理 ─────────────────────────────
     def market_cap_snapshot(
         self, symbols: list[str], when: date, market: Market | None = None

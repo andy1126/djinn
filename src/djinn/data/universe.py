@@ -27,7 +27,18 @@ UNIVERSE_INDEX_MAP: Final[dict[str, dict[str, object]]] = {
     "CSI300": {"market": Market.CN, "akshare": "000300", "name": "沪深300"},
     "CSI500": {"market": Market.CN, "akshare": "000905", "name": "中证500"},
     "CSI800": {"market": Market.CN, "akshare": "000906", "name": "中证800"},
+    "SSE50": {"market": Market.CN, "akshare": "000016", "name": "上证50"},
+    "STAR50": {"market": Market.CN, "akshare": "000688", "name": "科创50"},
+    "CHINEXT": {"market": Market.CN, "akshare": "399006", "name": "创业板指"},
+    "CSI1000": {"market": Market.CN, "akshare": "000852", "name": "中证1000"},
     "HSI": {"market": Market.HK, "yahoo": "^HSI", "name": "恒生指数"},
+    # 恒生科技无 yfiua 免费 CSV,用追踪 ETF(iShares 3067.HK)持仓代理
+    "HSTECH": {
+        "market": Market.HK,
+        "yahoo": "^HSTECH",
+        "name": "恒生科技",
+        "etf": "3067.HK",
+    },
     "SP500": {"market": Market.US, "yahoo": "^GSPC", "name": "标普500"},
     "NASDAQ100": {"market": Market.US, "yahoo": "^NDX", "name": "纳斯达克100"},
     "DOWJONES": {"market": Market.US, "yahoo": "^DJI", "name": "道琼斯工业指数"},

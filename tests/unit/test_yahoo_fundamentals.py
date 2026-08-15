@@ -242,3 +242,30 @@ def test_info_cache_reuses_ticker_info(monkeypatch: pytest.MonkeyPatch) -> None:
     p._info_cache["AAPL"] = (0.0, info_with_price)
     p.get_profile("AAPL", Market.US)
     assert calls["n"] == 2
+
+
+def test_get_daily_dividends(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """yfinance ``Ticker.dividends`` → 规范化(index=除息日,``dividend`` 列)。"""
+    from datetime import date
+
+    from djinn.data.cache import DataCache
+    from djinn.data.schema import COL_DIVIDEND
+
+    class _DivTicker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        @property
+        def dividends(self) -> pd.Series:
+            idx = pd.to_datetime(["2024-01-10", "2024-04-10"]).tz_localize(
+                "America/New_York"
+            )
+            return pd.Series([0.5, 0.6], index=idx)
+
+    monkeypatch.setitem(
+        sys.modules, "yfinance", types.SimpleNamespace(Ticker=_DivTicker)
+    )
+    p = YahooProvider(cache=DataCache(cache_dir=tmp_path), rate_limit_sec=0.0)
+    out = p.get_daily_dividends("AAPL", date(2024, 1, 1), date(2024, 12, 31))
+    assert out[COL_DIVIDEND].tolist() == [0.5, 0.6]
+    assert list(out.index) == [pd.Timestamp("2024-01-10"), pd.Timestamp("2024-04-10")]
