@@ -9,6 +9,7 @@ import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -95,8 +96,14 @@ def _is_portfolio_scope(cfg: BacktestConfig) -> bool:
     return cfg.strategy.scope == "portfolio" or cfg.strategy.name == "FactorPortfolio"
 
 
-def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
-    """从 BacktestConfig 构造 EngineConfig(费用/滑点/约束/组合/风控)。"""
+def build_engine_config(
+    cfg: BacktestConfig, *, start: date | None = None
+) -> EngineConfig:
+    """从 BacktestConfig 构造 EngineConfig(费用/滑点/约束/组合/风控)。
+
+    ``start`` 为账户开账起点(H1,walk-forward 暖机用):start 之前的数据仅供因子
+    lookback,账本 / 净值从 start 起记录。None 等价于数据首日。
+    """
     market = cfg.resolved_market()
     portfolio_scope = _is_portfolio_scope(cfg)
 
@@ -177,6 +184,7 @@ def build_engine_config(cfg: BacktestConfig) -> EngineConfig:
         fill_ref=cfg.costs.fill_ref,
         process_corporate_actions=(cfg.adjust == Adjust.NONE),
         calendar=calendar,
+        start=start,
     )
 
 
@@ -362,8 +370,12 @@ def _try_fundamental_panels(
     data: dict[str, MarketData],
     registry: ProviderRegistry,
     market: Market,
+    *,
+    start: date | None = None,
 ) -> tuple[dict[str, pd.DataFrame] | None, list[str]]:
     """为因子组合策略构建 point-in-time 基本面宽表(失败退化为纯行情因子)。
+
+    ``start`` 为面板起点(H1 暖机:窗口起点之前的基本面历史也可见)。
 
     Returns:
         ``(panels, caveats)``:caveats 为 C3 数据口径告警(快照字段 / 市值近似)。
@@ -374,13 +386,14 @@ def _try_fundamental_panels(
     idx = pd.DatetimeIndex([])
     for md in data.values():
         idx = idx.union(pd.DatetimeIndex(md.df.index))
+    fstart = start or cfg.period.start
     eng = FactorEngine()
     try:
         panels = eng._fundamental_panels(
             DEFAULT_FUNDAMENTAL_FIELDS,
             symbols,
             idx.sort_values(),
-            cfg.period.start,
+            fstart,
             cfg.period.end,
             FundamentalsRouter(registry.providers),
             market,
@@ -505,6 +518,7 @@ def run_backtest(
     cache: DataCache | None = None,
     with_attribution: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    warmup_start: date | None = None,
 ) -> RunResult:
     """执行完整回测:数据 → 引擎 → 报告 → 导出。
 
@@ -514,10 +528,21 @@ def run_backtest(
 
     ``should_stop`` 为协作式取消回调:引擎主循环每日检查,返回 True 时抛
     :class:`~djinn.utils.exceptions.BacktestCancelled` 提前终止(E4)。
+
+    ``warmup_start``(H1,walk-forward 用):数据覆盖 ``[warmup_start, period.end]``,
+    但账本 / 净值从 ``cfg.period.start`` 起记录——warmup 段仅供因子 lookback,
+    不回测、不进净值。None 等价于数据从 ``period.start`` 起。
     """
     market = cfg.resolved_market()
     if registry is None:
         registry = default_registry(csv_dir=csv_dir, cache=cache)
+    # H1:暖机取数起点 + 引擎开账起点
+    fetch_start = (
+        cfg.period.start
+        if warmup_start is None
+        else min(warmup_start, cfg.period.start)
+    )
+    engine_start = cfg.period.start if warmup_start is not None else None
 
     # 解析标的池(symbols ∪ index 成分,再经 screen 截面筛选)
     symbols = _resolve_universe_symbols(cfg, registry, market)
@@ -528,7 +553,7 @@ def run_backtest(
     def _fetch(sym: str) -> tuple[str, MarketData | None]:
         try:
             md = registry.get_ohlcv(
-                sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
+                sym, fetch_start, cfg.period.end, cfg.adjust, market=market
             )
             return sym, md
         except Exception as e:
@@ -548,7 +573,7 @@ def run_backtest(
             benchmark = load_benchmark(
                 registry,
                 cfg.universe.benchmark,
-                cfg.period.start,
+                fetch_start,
                 cfg.period.end,
                 market=market,
                 adjust=cfg.adjust,
@@ -561,10 +586,10 @@ def run_backtest(
     data_caveats: list[str] = []
     if _is_portfolio_scope(cfg):
         fundamentals, data_caveats = _try_fundamental_panels(
-            cfg, data, registry, market
+            cfg, data, registry, market, start=fetch_start
         )
     strategy = build_strategy(cfg, fundamentals=fundamentals, registry=registry)
-    engine_cfg = build_engine_config(cfg)
+    engine_cfg = build_engine_config(cfg, start=engine_start)
     engine = EventDrivenEngine(engine_cfg)
     result = engine.run(strategy, data, benchmark=benchmark, should_stop=should_stop)
 

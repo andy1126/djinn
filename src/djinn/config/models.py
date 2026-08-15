@@ -206,6 +206,40 @@ class OutputConfig(BaseModel):
     rolling_window: int = Field(default=63, ge=5)
 
 
+class WalkForwardConfig(BaseModel):
+    """Walk-Forward 分析:滚动样本外验证(H 计划)。
+
+    ``period`` 为全区间,窗口在其内滚动;每个窗口:样本内(IS)网格搜索选参
+    (按窗口独立选参),样本外(OOS)用 IS 最优参数评估;所有 OOS 段拼接成
+    无前视的样本外净值。``min_is_sharpe`` 不达标则该窗口不部署(OOS 空仓)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    is_days: int = Field(default=250, gt=0, description="样本内(训练)窗口,交易日")
+    oos_days: int = Field(default=125, gt=0, description="样本外(验证)窗口,交易日")
+    step: int | None = Field(
+        default=None, gt=0, description="滚动步长,默认=oos_days(非重叠)"
+    )
+    n_windows: int | None = Field(
+        default=None, gt=0, description="窗口数上限,默认由区间推导"
+    )
+    target: str = Field(default="sharpe", description="IS 优化目标(与 sweep 同语义)")
+    grid: dict[str, list[Any]] = Field(
+        default_factory=dict, description="参数网格(与 sweep --grid 同格式)"
+    )
+    top_k: int = Field(
+        default=1, gt=0, description="部署 IS 最优前 k 个组合(1=只部署最优)"
+    )
+    min_is_sharpe: float | None = Field(
+        default=None, description="IS 目标不达标则该窗口 OOS 空仓(防过拟合)"
+    )
+    warmup_days: int = Field(
+        default=300,
+        ge=0,
+        description="每窗口前置暖机交易日(≥ 因子 max_lookback 最稳)",
+    )
+
+
 class BacktestConfig(BaseModel):
     """回测完整配置(唯一权威)。"""
 
@@ -220,6 +254,9 @@ class BacktestConfig(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     adjust: Adjust = Adjust.BACKWARD
     risk_free_rate: float = Field(default=0.0, ge=0, le=1)
+    walk_forward: WalkForwardConfig | None = Field(
+        default=None, description="Walk-Forward 分析配置(None=不启用)"
+    )
 
     @field_validator("adjust", mode="before")
     @classmethod

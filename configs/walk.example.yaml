@@ -1,0 +1,65 @@
+# Djinn Walk-Forward 分析示例 — 均线 fast×slow 网格,滚动样本外验证(H 计划)
+# 用法:djinn walk -c configs/walk.example.yaml
+#       djinn walk -c configs/walk.example.yaml --grid '{"fast":[5,10,20],"slow":[20,30,60]}' --min-is-sharpe 0.5
+#
+# 语义:period 为全区间,窗口在其内滚动。每窗口先在样本内(IS)网格独立选参,
+#       再用 IS 最优参数在样本外(OOS)评估;所有 OOS 段拼接成无前视的样本外净值。
+#       若无 --grid 且 walk_forward.grid 为空 → 直接报错。
+
+universe:
+  symbols: ["AAPL"]
+  benchmark: "^GSPC"
+  market: US
+
+period:
+  start: "2018-01-01"
+  end: "2024-12-31"
+
+account:
+  initial_cash: 100000
+  currency: USD
+
+adjust: backward
+
+costs:
+  commission:
+    type: us
+  slippage:
+    type: fixed_bps
+    bps: 5
+  enforce_price_limit: true
+  enforce_suspension: true
+  enforce_lot: true
+
+strategy:
+  name: MACrossover
+  params: {}        # 参数由 walk_forward.grid(或 --grid)覆盖
+
+portfolio:
+  mode: single
+  allocation: equal
+  rebalance:
+    period: none
+    threshold: 0.0
+
+risk:
+  max_single_weight: 1.0
+  max_total_position: 1.0
+
+output:
+  dir: "./results/walk"
+  export: []
+  report: none
+
+risk_free_rate: 0.02
+
+walk_forward:
+  is_days: 250            # 样本内(训练)窗口,交易日
+  oos_days: 125           # 样本外(验证)窗口,交易日
+  step: 125               # 滚动步长(默认=oos_days,非重叠)
+  target: sharpe          # IS 优化目标
+  min_is_sharpe: 0.0      # IS 不达标(此处 sharpe<0)则该窗口不部署(OOS 空仓)
+  warmup_days: 300        # 每窗口前置暖机交易日(≥ 因子 max_lookback 最稳)
+  grid:
+    fast: [5, 10]
+    slow: [20, 30]

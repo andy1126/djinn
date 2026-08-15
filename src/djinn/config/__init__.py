@@ -16,6 +16,7 @@ from djinn.config.models import (
     SlippageConfig,
     StrategyConfig,
     UniverseConfig,
+    WalkForwardConfig,
 )
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "SlippageConfig",
     "StrategyConfig",
     "UniverseConfig",
+    "WalkForwardConfig",
     "dump_config",
     "load_config",
 ]

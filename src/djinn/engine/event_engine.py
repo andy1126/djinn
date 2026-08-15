@@ -59,6 +59,9 @@ class EngineConfig:
     verify_presignal: bool = False
     # 基准标的(union 模式下以其交易日历为主日历时提供)
     benchmark_symbol: str | None = None
+    # H1:账户开账起点——start 之前的数据仅供因子 lookback(DataView 仍可见),
+    # 账本 / 净值从该日起记录(None=数据首日)。walk-forward 各窗口暖机用。
+    start: date | None = None
 
     def resolve(
         self, default_market: Market
@@ -141,6 +144,14 @@ class EventDrivenEngine:
 
         # 对齐所有标的的交易日索引(intersection 取交集;union 取并集/以基准日历为主)
         trading_index = self._aligned_index(data, benchmark)
+        # H1:暖机起始——start 之前的数据仅供因子 lookback(DataView 仍暴露全量历史),
+        # 账本 / 净值从 start 起记录;过滤后 equity_hist 与 index 长度保持一致。
+        if cfg.start is not None:
+            trading_index = trading_index[trading_index >= pd.Timestamp(cfg.start)]
+            if len(trading_index) == 0:
+                raise ValueError(
+                    f"engine.start={cfg.start} 晚于所有数据区间,无交易日可回测"
+                )
 
         # D8:预计算每个标的 ts→iloc 映射,主循环 _bars_at 用 O(1) 查表 + iloc 取行,
         # 取代每 ts 每 symbol 的 ``ts in index`` + ``.loc[ts]`` 双重查找。

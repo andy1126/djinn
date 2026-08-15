@@ -13,6 +13,7 @@ import json
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -130,8 +131,18 @@ def _run_one(
     registry: ProviderRegistry,
     params: dict[str, Any],
     target: str = "sharpe",
+    *,
+    warmup_start: date | None = None,
 ) -> dict[str, Any]:
-    """单次参数组合回测,返回 {params, config_summary, target, ...metrics}。"""
+    """单次参数组合回测,返回 {params, config_summary, target, ...metrics}。
+
+    ``warmup_start``(H 计划):数据覆盖 ``[warmup_start, period.end]`` 供因子
+    lookback,账本 / 净值从 ``cfg.period.start`` 起记录(walk-forward IS 用)。
+
+    入口深拷贝 ``cfg``:并行扫描(``run_sweep_job`` / walk-forward IS)下每个组合
+    独立配置,避免 ``_apply_param`` 对共享 cfg 的写竞态。
+    """
+    cfg = cfg.model_copy(deep=True)
     # 应用可扫轴(可能改 universe.index / factor_weights / allocation / n_stocks / rebalance_freq)
     for k, v in params.items():
         _apply_param(cfg, k, v)
@@ -141,12 +152,19 @@ def _run_one(
         if comps:
             cfg.universe.symbols = list(dict.fromkeys(comps))
     strategy = build_strategy(cfg)
-    engine_cfg = build_engine_config(cfg)
+    fetch_start = (
+        cfg.period.start
+        if warmup_start is None
+        else min(warmup_start, cfg.period.start)
+    )
+    engine_cfg = build_engine_config(
+        cfg, start=cfg.period.start if warmup_start is not None else None
+    )
     engine = EventDrivenEngine(engine_cfg)
     market = cfg.resolved_market()
     data = {
         sym: registry.get_ohlcv(
-            sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
+            sym, fetch_start, cfg.period.end, cfg.adjust, market=market
         )
         for sym in cfg.universe.symbols
     }
