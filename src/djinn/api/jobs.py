@@ -430,14 +430,41 @@ def run_sweep_job(
                 sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
             )
         n = len(combos) or 1
-        results: list[dict[str, Any]] = []
-        for i, c in enumerate(combos):
-            if registry.is_cancel_requested(job_id):
-                raise BacktestCancelled(f"扫描已取消 @组合 {i + 1}/{n}")
-            results.append(_run_one(cfg, registry_obj, c, target))
-            registry.update(
-                job_id, progress=0.1 + 0.85 * (i + 1) / n, stage=f"扫描 {i + 1}/{n}"
-            )
+        # D7:并行扫描(线程共享缓存;``SweepRequest.parallel`` 控制)
+        parallel = bool(meta.get("parallel", False))
+        if parallel and n > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            _workers = int(os.environ.get("DJINN_FETCH_WORKERS", "8"))
+            ex = ThreadPoolExecutor(max_workers=_workers)
+            results = []
+            try:
+                futs = [
+                    ex.submit(_run_one, cfg, registry_obj, c, target) for c in combos
+                ]
+                for done, fut in enumerate(as_completed(futs), 1):
+                    if registry.is_cancel_requested(job_id):
+                        ex.shutdown(wait=False, cancel_futures=True)
+                        raise BacktestCancelled(f"扫描已取消 @{done}/{n}")
+                    results.append(fut.result())
+                    registry.update(
+                        job_id,
+                        progress=0.1 + 0.85 * done / n,
+                        stage=f"扫描 {done}/{n}",
+                    )
+            finally:
+                ex.shutdown(wait=True)
+        else:
+            results = []
+            for i, c in enumerate(combos):
+                if registry.is_cancel_requested(job_id):
+                    raise BacktestCancelled(f"扫描已取消 @组合 {i + 1}/{n}")
+                results.append(_run_one(cfg, registry_obj, c, target))
+                registry.update(
+                    job_id,
+                    progress=0.1 + 0.85 * (i + 1) / n,
+                    stage=f"扫描 {i + 1}/{n}",
+                )
         # 排序:max_drawdown 等越小越好的目标需升序(reversed=False)。
         from djinn.cli.sweep import REVERSE_MIN_TARGETS
 
@@ -542,14 +569,20 @@ def _build_fundamental_panels(
     end: date,
     registry: ProviderRegistry,
     market: Any,
+    *,
+    engine: Any = None,
 ) -> dict[str, Any]:
-    """组装 point-in-time 基本面宽表(供估值 / 质量 / 成长类因子)。"""
+    """组装 point-in-time 基本面宽表(供估值 / 质量 / 成长类因子)。
+
+    ``engine`` 复用时,C3 的口径告警(``engine.caveats()``)会在组装过程中被
+    填充——调用方需用与 ``_ohlcv_panels`` 同一引擎实例,以便把 caveats 透出报告。
+    """
     import pandas as pd
 
     from djinn.data.providers.fundamentals_router import FundamentalsRouter
     from djinn.factor.engine import DEFAULT_FUNDAMENTAL_FIELDS, FactorEngine
 
-    eng = FactorEngine()
+    eng = engine if engine is not None else FactorEngine()
     return eng._fundamental_panels(
         DEFAULT_FUNDAMENTAL_FIELDS,
         symbols,
@@ -589,16 +622,31 @@ def run_factor_analysis_job(
             raise ValueError("标的池为空(需提供 symbols 或可解析的 index)")
         factor = make_factor(factor_name, **params)
 
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("因子分析已取消")
         registry.update(job_id, progress=0.2, stage=f"拉取 {len(symbols)} 只行情")
         eng = FactorEngine()
         prices, ohlcv = eng._ohlcv_panels(symbols, start, end, preg, market, adjust)
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("因子分析已取消")
         registry.update(job_id, progress=0.45, stage="计算因子面板")
         fundamentals = _build_fundamental_panels(
-            symbols, prices.index, start, end, preg, market
+            symbols, prices.index, start, end, preg, market, engine=eng
         )
         factor.validate_inputs(fundamentals, ohlcv)
+        # C6:因子声明了 benchmark 时注入真实基准日收益(否则 BetaFactor 退化为等权代理)
+        bench = getattr(factor, "benchmark", None)
+        if bench:
+            bench_rets = eng._benchmark_returns(
+                str(bench), start, end, preg, market, adjust
+            )
+            if len(bench_rets):
+                ohlcv_any: dict[str, Any] = ohlcv
+                ohlcv_any["__benchmark__"] = bench_rets
         factor_panel = factor.compute(prices, ohlcv, fundamentals)
 
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("因子分析已取消")
         registry.update(job_id, progress=0.7, stage="IC / 分层分析")
         periods = tuple(int(p) for p in (meta.get("periods") or [1, 5, 10]))
         fwd = compute_forward_returns(prices, periods)
@@ -609,6 +657,7 @@ def run_factor_analysis_job(
             ic_method=str(meta.get("ic_method", "spearman")),
             n_quantiles=int(meta.get("n_quantiles", 5)),
             industry_map=_industry_map(preg, symbols),
+            caveats=eng.caveats(),
         )
         registry.update(
             job_id,
@@ -617,6 +666,9 @@ def run_factor_analysis_job(
             stage="完成",
             result={"__meta__": meta, "report": report.to_dict(), "symbols": symbols},
         )
+    except BacktestCancelled:
+        # E4:协作式取消 → cancelled(非 error),__meta__ 保留可重新提交
+        registry.update(job_id, status="cancelled", stage="已取消")
     except Exception as e:
         _log.exception("因子分析任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
@@ -649,15 +701,21 @@ def run_factor_matrix_job(
         if not pts or len(pts) < 2:
             raise ValueError("多因子诊断需至少 2 个因子")
 
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("多因子诊断已取消")
         registry.update(job_id, progress=0.15, stage=f"拉取 {len(symbols)} 只行情")
         eng = FactorEngine()
         prices, ohlcv = eng._ohlcv_panels(symbols, start, end, preg, market, adjust)
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("多因子诊断已取消")
         registry.update(job_id, progress=0.45, stage=f"计算 {len(pts)} 个因子面板")
         fundamentals = _build_fundamental_panels(
             symbols, prices.index, start, end, preg, market
         )
         panels: dict[str, Any] = {}
         for pt in pts:
+            if registry.is_cancel_requested(job_id):
+                raise BacktestCancelled("多因子诊断已取消")
             name = str(pt["factor"])
             params = pt.get("params") or {}
             direction = int(pt.get("direction", 1))
@@ -683,6 +741,7 @@ def run_factor_matrix_job(
             prices,
             periods=periods,
             ic_method=ic_method,  # type: ignore[arg-type]
+            orthogonalized=bool(meta.get("orthogonalized", False)),
         )
         registry.update(
             job_id,
@@ -691,6 +750,9 @@ def run_factor_matrix_job(
             stage="完成",
             result={"__meta__": meta, "report": report.to_dict(), "symbols": symbols},
         )
+    except BacktestCancelled:
+        # E4:协作式取消 → cancelled(非 error),__meta__ 保留可重新提交
+        registry.update(job_id, status="cancelled", stage="已取消")
     except Exception as e:
         _log.exception("多因子诊断任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")
@@ -772,6 +834,8 @@ def run_screen_job(
             date.fromisoformat(str(meta["when"])) if meta.get("when") else date.today()
         )
 
+        if registry.is_cancel_requested(job_id):
+            raise BacktestCancelled("选股已取消")
         registry.update(job_id, progress=0.2, stage=f"拉取 {len(symbols)} 只基本面快照")
         router = FundamentalsRouter(preg.providers)
         snap = router.get_snapshot(symbols, when, market)
@@ -781,6 +845,8 @@ def run_screen_job(
         score_map: dict[str, float] = {}
         scores_meta = meta.get("scores") or []
         if scores_meta:
+            if registry.is_cancel_requested(job_id):
+                raise BacktestCancelled("选股已取消")
             registry.update(job_id, progress=0.5, stage="多因子打分排序")
             score_map = _score_symbols(
                 preg,
@@ -807,6 +873,9 @@ def run_screen_job(
             stage="完成",
             result={"__meta__": meta, "count": len(rows), "results": rows},
         )
+    except BacktestCancelled:
+        # E4:协作式取消 → cancelled(非 error),__meta__ 保留可重新提交
+        registry.update(job_id, status="cancelled", stage="已取消")
     except Exception as e:
         _log.exception("选股任务 %s 失败", job_id)
         registry.update(job_id, status="error", error=f"{type(e).__name__}: {e}")

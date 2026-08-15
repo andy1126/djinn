@@ -154,6 +154,7 @@ def serialize_report(report: Report) -> dict[str, Any]:
         "prices": _df_to_dict(report.prices),
         "attribution": report.attribution,
         "factor_exposure": report.factor_exposure,
+        "meta": _sanitize(report.meta),
         "v": 2,
     }
 

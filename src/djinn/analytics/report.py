@@ -54,6 +54,8 @@ class Report:
     # 均为已序列化的 JSON 友好 dict(BrinsonResult.to_dict / FactorExposureReport.to_dict)。
     attribution: dict[str, Any] | None = None  # Brinson 行业归因(配置/选股/交互)
     factor_exposure: dict[str, Any] | None = None  # 因子暴露时序 + 行业权重分布
+    # ── 口径元信息(C3:data_caveats 等非 point-in-time 告警,供报告页展示)──
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
         """一页式摘要(指标 + 关键统计)。"""

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -16,10 +17,27 @@ from djinn.api.jobs import JobRecord, JobRegistry
 _TERMINAL = ("done", "error", "cancelled")
 
 
+def _ws_authorized(websocket: WebSocket) -> bool:
+    """E8:WS 鉴权(设置 DJINN_API_TOKEN 后,握手须带 ``?token=`` 或 Bearer 头)。
+
+    HTTP 中间件只覆盖普通请求;WebSocket 握手不走中间件,需在订阅前单独校验。
+    未设置 token 时零配置放行。
+    """
+    token = os.environ.get("DJINN_API_TOKEN")
+    if not token:
+        return True
+    if websocket.query_params.get("token") == token:
+        return True
+    return websocket.headers.get("authorization", "") == f"Bearer {token}"
+
+
 async def stream_job_progress(
     websocket: WebSocket, registry: JobRegistry, job_id: str
 ) -> None:
     """接受 WS 连接,推送 job 的当前态与后续增量(含心跳),终态后关闭。"""
+    if not _ws_authorized(websocket):
+        await websocket.close(code=4001, reason="未授权")
+        return
     await websocket.accept()
     job = registry.get(job_id)
     if not job:

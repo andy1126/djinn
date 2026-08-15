@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any
 
@@ -92,7 +93,11 @@ async def list_indicators(
 ) -> IndicatorListResponse:
     """列出全部指标(内置 + 用户自定义)及签名/源码。"""
     items = _builtin_info()
-    items += [_user_info(r) for r in store.list_indicators()]
+    # E2:用户指标编译(exec 用户代码)卸载到线程
+    user_items = await asyncio.to_thread(
+        lambda: [_user_info(r) for r in store.list_indicators()]
+    )
+    items += user_items
     return IndicatorListResponse(indicators=items)
 
 
@@ -101,7 +106,10 @@ async def list_user_indicators(
     store: IndicatorStore = Depends(get_indicator_store),
 ) -> list[UserIndicatorResponse]:
     """列出全部用户自定义指标(含源码)。"""
-    return [_to_response(r) for r in store.list_indicators()]
+    # E2:编译用户代码卸载到线程
+    return await asyncio.to_thread(
+        lambda: [_to_response(r) for r in store.list_indicators()]
+    )
 
 
 @router.post("/user", response_model=UserIndicatorResponse, status_code=201)
@@ -113,7 +121,8 @@ async def create_user_indicator(
     if req.name in BUILTIN_INDICATORS:
         raise HTTPException(status_code=409, detail=f"名称 {req.name!r} 与内置指标冲突")
     try:
-        compile_user_indicator(req.name, req.source_code)
+        # E2:exec 用户代码卸载到线程
+        await asyncio.to_thread(compile_user_indicator, req.name, req.source_code)
     except StrategyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:
@@ -129,7 +138,10 @@ async def validate_user_indicator(
 ) -> UserIndicatorValidateResponse:
     """仅编译校验(不落库),返回签名或错误。"""
     try:
-        func = compile_user_indicator(req.name, req.source_code)
+        # E2:exec 用户代码卸载到线程
+        func = await asyncio.to_thread(
+            compile_user_indicator, req.name, req.source_code
+        )
         return UserIndicatorValidateResponse(
             valid=True, signature=_fmt_signature(req.name, func)
         )
@@ -154,7 +166,8 @@ async def update_user_indicator(
     if new_name in BUILTIN_INDICATORS:
         raise HTTPException(status_code=409, detail=f"名称 {new_name!r} 与内置指标冲突")
     try:
-        compile_user_indicator(new_name, new_source)
+        # E2:exec 用户代码卸载到线程
+        await asyncio.to_thread(compile_user_indicator, new_name, new_source)
     except StrategyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:

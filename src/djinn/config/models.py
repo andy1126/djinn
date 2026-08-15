@@ -122,6 +122,7 @@ class SelectionConfig(BaseModel):
     min_amount: float | None = None  # 20 日平均成交额下限(元)
     min_list_days: int | None = None  # 上市最少交易日数
     exclude_st: bool = False
+    neutralize: bool = False  # C5:打分前行业/市值中性化(需 industry_map + 市值面板)
     industry_neutral: bool = False
     max_sector_weight: float | None = None  # 行业暴露上限(0,1]
     min_score_diff: float = 0.0  # 换手惩罚阈值(zscore σ)
@@ -148,6 +149,10 @@ class StrategyConfig(BaseModel):
     factor_weights: dict[str, float] | None = Field(
         default=None, description="因子名 → 权重(负值 = 因子值越低越好)"
     )
+    # C9:因子加权方式(static=手填 factor_weights;icir=滚动 ICIR 自动加权,符号自适配)
+    weighting: Literal["static", "icir"] = "static"
+    icir_window: int = Field(default=60, gt=0, description="滚动 ICIR 窗口(交易日)")
+    icir_min_periods: int = Field(default=20, gt=0, description="滚动 ICIR 最少观测数")
     n_stocks: int | None = Field(default=None, gt=0, description="选股数(TopN)")
     rebalance_freq: int | None = Field(
         default=None, gt=0, description="调仓间隔(交易日)"

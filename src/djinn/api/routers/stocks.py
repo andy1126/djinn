@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any
 
@@ -44,23 +45,29 @@ async def search_symbols(
 ) -> SymbolSearchResponse:
     """按代码 / 名称搜索标的(三市场,返回联想建议)。"""
     m = _market_from(market)
-    results: list[SymbolSearchResult] = []
-    for p in registry.providers:
-        try:
-            pairs = p.search_symbols(q, m)
-        except NotImplementedError:
-            continue
-        except Exception as e:
-            _log.warning("provider %s 搜索 %s 失败: %s", p.name, q, e)
-            continue
-        for sym, name in pairs:
-            results.append(
-                SymbolSearchResult(
-                    symbol=sym, market=str(m.value if m else "auto"), name=name
+
+    def _do_search() -> list[SymbolSearchResult]:
+        results: list[SymbolSearchResult] = []
+        for p in registry.providers:
+            try:
+                pairs = p.search_symbols(q, m)
+            except NotImplementedError:
+                continue
+            except Exception as e:
+                _log.warning("provider %s 搜索 %s 失败: %s", p.name, q, e)
+                continue
+            for sym, name in pairs:
+                results.append(
+                    SymbolSearchResult(
+                        symbol=sym, market=str(m.value if m else "auto"), name=name
+                    )
                 )
-            )
-        if results:
-            break  # 首个支持搜索的 provider 返回结果
+            if results:
+                break  # 首个支持搜索的 provider 返回结果
+        return results
+
+    # E2:provider 网络调用卸载到线程,不阻塞事件循环
+    results = await asyncio.to_thread(_do_search)
     return SymbolSearchResponse(query=q, results=results)
 
 
@@ -72,11 +79,19 @@ async def stock_detail(
 ) -> StockDetail:
     """单只股票详情(估值 + 财务 + 价格,字段按数据源能力降级)。"""
     m = _market_from(market)
-    # 解析 provider(symbol 属于哪个市场),拿行情兜底
     try:
-        provider = registry.resolve(symbol, m)
+        # E2:provider 网络调用(快照 / 名称 / 价格 / 档案)卸载到线程
+        return await asyncio.to_thread(_build_detail, registry, symbol, m)
     except SymbolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+def _build_detail(
+    registry: ProviderRegistry, symbol: str, m: Market | None
+) -> StockDetail:
+    """同步构建单股详情(供 to_thread 卸载;含网络调用)。"""
+    # 解析 provider(symbol 属于哪个市场),拿行情兜底
+    provider = registry.resolve(symbol, m)
 
     # 估值 + 财务快照(聚合各 provider,字段缺失为 NaN)
     snap = FundamentalsRouter(registry.providers).get_snapshot(

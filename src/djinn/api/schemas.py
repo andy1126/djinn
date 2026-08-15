@@ -445,3 +445,6 @@ class FactorMatrixRequest(BaseModel):
         default="spearman", description="IC 相关方法 spearman/pearson"
     )
     periods: list[int] = Field(default=[1, 5, 10], description="前向收益持有期(交易日)")
+    orthogonalized: bool = Field(
+        default=False, description="相关矩阵是否改用 Schmidt 正交化后的因子"
+    )

@@ -11,6 +11,8 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ _log = get_logger(__name__)
 ALLOWED_SWEEP_AXES: list[str] = [
     "universe.index",
     "strategy.factor_weights",
+    "strategy.weighting",
     "portfolio.allocation",
     "strategy.n_stocks",
     "strategy.rebalance_freq",
@@ -82,6 +85,8 @@ def _apply_param(cfg: BacktestConfig, key: str, value: Any) -> None:
             if value is not None
             else None
         )
+    elif key == "strategy.weighting":
+        cfg.strategy.weighting = str(value)  # type: ignore[assignment]
     elif key == "portfolio.allocation":
         cfg.portfolio.allocation = str(value)  # type: ignore[assignment]
     elif key == "strategy.n_stocks":
@@ -107,6 +112,12 @@ def _config_summary(cfg: BacktestConfig) -> dict[str, Any]:
         "universe.index": cfg.universe.index,
         "n_symbols": len(cfg.universe.symbols),
         "strategy.factor_weights": cfg.strategy.factor_weights,
+        "strategy.weighting": cfg.strategy.weighting,
+        "strategy.min_score_diff": (
+            cfg.strategy.selection.min_score_diff
+            if cfg.strategy.selection is not None
+            else None
+        ),
         "portfolio.allocation": cfg.portfolio.allocation,
         "strategy.n_stocks": cfg.strategy.n_stocks,
         "strategy.rebalance_freq": cfg.strategy.rebalance_freq,
@@ -189,10 +200,16 @@ def sweep_command(
     index_vals = grid_dict.get("universe.index", []) or []
     for idx in index_vals:
         all_symbols.update(_index_symbols(str(idx), registry))
-    for sym in all_symbols:
+    # D7:预拉并发(IO 密集;DataCache 线程安全)
+    workers = int(os.environ.get("DJINN_FETCH_WORKERS", "8"))
+
+    def _prefetch(sym: str) -> None:
         registry.get_ohlcv(
             sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
         )
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(_prefetch, all_symbols))
 
     if parallel and len(combos) > 1:
         try:

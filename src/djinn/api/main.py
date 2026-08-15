@@ -37,9 +37,40 @@ _API_TOKEN = os.environ.get("DJINN_API_TOKEN")
 _AUTH_EXEMPT = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
 
 
+_PURGE_MARKER = ".cache/djinn_last_purge"
+
+
+def _auto_purge_old_jobs(registry: Any) -> None:
+    """E6:每日一次自动清理过期任务(保留 ``DJINN_JOB_RETENTION_DAYS`` 天)。
+
+    用 marker 文件记录上次清理日期,避免每次启动(或热重载)都重复清理。
+    """
+    import datetime
+    from pathlib import Path
+
+    days = int(os.environ.get("DJINN_JOB_RETENTION_DAYS", "30"))
+    marker = Path(_PURGE_MARKER)
+    try:
+        last = datetime.date.fromisoformat(marker.read_text().strip())
+    except Exception:
+        last = None
+    if last == datetime.date.today():
+        return
+    try:
+        n = registry.purge_older_than(days)
+        if n:
+            logger.info("自动清理 %d 个过期任务(保留 %d 天)", n, days)
+    except Exception as e:  # 清理失败不影响启动
+        logger.warning("自动清理过期任务失败: %s", e)
+    from contextlib import suppress
+
+    with suppress(Exception):
+        marker.write_text(datetime.date.today().isoformat())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """启动钩子:恢复进程重启前被中断的后台任务(见 recover_orphaned_jobs)。
+    """启动钩子:恢复孤儿任务 + 每日一次自动清理过期任务。
 
     测试环境(TestClient 不用 ``with`` 不触发 lifespan,且 ``DJINN_TEST=1``
     守卫)不执行恢复,避免误恢复真实任务。
@@ -49,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     recovered = recover_orphaned_jobs(registry, preg)
     if recovered:
         logger.info("启动恢复 %d 个孤儿任务", recovered)
+    _auto_purge_old_jobs(registry)
     yield
 
 

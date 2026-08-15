@@ -5,7 +5,9 @@ CLI(`djinn run`)与(Phase 2)FastAPI 端点共用此模块,保证结果一致。
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -254,12 +256,14 @@ def _build_factor_portfolio(
             exclude_st=sel.exclude_st,
             min_score_diff=sel.min_score_diff,
         )
-        if sel.industry_neutral or sel.max_sector_weight is not None:
+        # C5:neutralize 与行业中性/行业上限同样需要 industry_map
+        if sel.neutralize or sel.industry_neutral or sel.max_sector_weight is not None:
             if registry is not None:
                 symbols = _resolve_universe_symbols(
                     cfg, registry, cfg.resolved_market()
                 )
                 kwargs["industry_map"] = _industry_map_safe(registry, symbols)
+            kwargs["neutralize"] = sel.neutralize
             kwargs["industry_neutral"] = sel.industry_neutral
             kwargs["max_sector_weight"] = sel.max_sector_weight
         if sel.exclude_st:
@@ -277,6 +281,9 @@ def _build_factor_portfolio(
         scores=scores,
         n_stocks=n_stocks,
         rebalance_freq=rebalance_freq,
+        weighting=cfg.strategy.weighting,
+        icir_window=cfg.strategy.icir_window,
+        icir_min_periods=cfg.strategy.icir_min_periods,
         allocation=_build_allocation(cfg),
         fundamentals=fundamentals,
         **kwargs,
@@ -355,8 +362,12 @@ def _try_fundamental_panels(
     data: dict[str, MarketData],
     registry: ProviderRegistry,
     market: Market,
-) -> dict[str, pd.DataFrame] | None:
-    """为因子组合策略构建 point-in-time 基本面宽表(失败退化为纯行情因子)。"""
+) -> tuple[dict[str, pd.DataFrame] | None, list[str]]:
+    """为因子组合策略构建 point-in-time 基本面宽表(失败退化为纯行情因子)。
+
+    Returns:
+        ``(panels, caveats)``:caveats 为 C3 数据口径告警(快照字段 / 市值近似)。
+    """
     from djinn.factor.engine import DEFAULT_FUNDAMENTAL_FIELDS, FactorEngine
 
     symbols = list(data.keys())
@@ -365,7 +376,7 @@ def _try_fundamental_panels(
         idx = idx.union(pd.DatetimeIndex(md.df.index))
     eng = FactorEngine()
     try:
-        return eng._fundamental_panels(
+        panels = eng._fundamental_panels(
             DEFAULT_FUNDAMENTAL_FIELDS,
             symbols,
             idx.sort_values(),
@@ -374,9 +385,10 @@ def _try_fundamental_panels(
             FundamentalsRouter(registry.providers),
             market,
         )
+        return panels, eng.caveats()
     except Exception as e:
         _log.warning("基本面面板构建失败,仅用行情类因子: %s", e)
-        return None
+        return None, []
 
 
 # ── 归因(Phase 5 接线)──────────────────────────────────
@@ -510,14 +522,24 @@ def run_backtest(
     # 解析标的池(symbols ∪ index 成分,再经 screen 截面筛选)
     symbols = _resolve_universe_symbols(cfg, registry, market)
 
-    # 拉取数据
+    # 拉取数据(D7:IO 密集,线程池并发;DataCache 线程安全,E1 已保证)
+    workers = int(os.environ.get("DJINN_FETCH_WORKERS", "8"))
+
+    def _fetch(sym: str) -> tuple[str, MarketData | None]:
+        try:
+            md = registry.get_ohlcv(
+                sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
+            )
+            return sym, md
+        except Exception as e:
+            _log.warning("拉取 %s 失败: %s", sym, e)
+            return sym, None
+
     data: dict[str, MarketData] = {}
-    for sym in symbols:
-        _log.info("拉取数据 %s [%s ~ %s]", sym, cfg.period.start, cfg.period.end)
-        md = registry.get_ohlcv(
-            sym, cfg.period.start, cfg.period.end, cfg.adjust, market=market
-        )
-        data[sym] = md
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for sym, md in ex.map(_fetch, symbols):
+            if md is not None:
+                data[sym] = md
 
     # 基准
     benchmark: MarketData | None = None
@@ -536,8 +558,11 @@ def run_backtest(
 
     # 策略(因子组合策略注入 point-in-time 基本面面板)+ 引擎
     fundamentals: dict[str, pd.DataFrame] | None = None
+    data_caveats: list[str] = []
     if _is_portfolio_scope(cfg):
-        fundamentals = _try_fundamental_panels(cfg, data, registry, market)
+        fundamentals, data_caveats = _try_fundamental_panels(
+            cfg, data, registry, market
+        )
     strategy = build_strategy(cfg, fundamentals=fundamentals, registry=registry)
     engine_cfg = build_engine_config(cfg)
     engine = EventDrivenEngine(engine_cfg)
@@ -550,6 +575,13 @@ def run_backtest(
         rf=cfg.risk_free_rate,
         rolling_window=cfg.output.rolling_window,
     )
+    # C3:数据口径告警(快照字段 / 市值近似)写入报告 meta,报告页展示
+    if data_caveats:
+        report.meta["data_caveats"] = data_caveats
+    # G9:调仓快照(每次选池的日期/名单/得分)写入报告 meta,报告页折叠面板展示
+    sel_log = getattr(strategy, "selection_log", None)
+    if sel_log:
+        report.meta["selection_log"] = sel_log
 
     # 归因(可选,Web 报告端点开启)
     if with_attribution:

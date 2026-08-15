@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -91,7 +92,11 @@ async def list_strategies(
 ) -> StrategyListResponse:
     """列出全部策略(内置 + 用户自定义)及参数 schema。"""
     items = [_builtin_info(n) for n in STRATEGY_REGISTRY]
-    items += [_user_info(r) for r in store.list_strategies()]
+    # E2:用户策略编译(exec 用户代码)卸载到线程,不阻塞事件循环
+    user_items = await asyncio.to_thread(
+        lambda: [_user_info(r) for r in store.list_strategies()]
+    )
+    items += user_items
     return StrategyListResponse(strategies=items)
 
 
@@ -100,7 +105,10 @@ async def list_user_strategies(
     store: StrategyStore = Depends(get_strategy_store),
 ) -> list[UserStrategyResponse]:
     """列出全部用户自定义策略(含源码)。"""
-    return [_to_response(r) for r in store.list_strategies()]
+    # E2:编译用户代码卸载到线程
+    return await asyncio.to_thread(
+        lambda: [_to_response(r) for r in store.list_strategies()]
+    )
 
 
 @router.post("/user", response_model=UserStrategyResponse, status_code=201)
@@ -113,7 +121,10 @@ async def create_user_strategy(
     if req.name in STRATEGY_REGISTRY:
         raise HTTPException(status_code=409, detail=f"名称 {req.name!r} 与内置策略冲突")
     try:
-        compile_user_strategy(req.name, req.source_code, req.kind)
+        # E2:exec 用户代码卸载到线程
+        await asyncio.to_thread(
+            compile_user_strategy, req.name, req.source_code, req.kind
+        )
     except StrategyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:
@@ -132,7 +143,10 @@ async def validate_user_strategy(
     """仅编译校验(不落库),返回参数 schema 或错误。"""
     _check_kind(req.kind)
     try:
-        cls = compile_user_strategy(req.name, req.source_code, req.kind)
+        # E2:exec 用户代码卸载到线程
+        cls = await asyncio.to_thread(
+            compile_user_strategy, req.name, req.source_code, req.kind
+        )
         return UserStrategyValidateResponse(valid=True, params=_params(cls))
     except StrategyError as e:
         return UserStrategyValidateResponse(valid=False, error=str(e))
@@ -157,7 +171,8 @@ async def update_user_strategy(
     if new_name in STRATEGY_REGISTRY:
         raise HTTPException(status_code=409, detail=f"名称 {new_name!r} 与内置策略冲突")
     try:
-        compile_user_strategy(new_name, new_source, new_kind)
+        # E2:exec 用户代码卸载到线程
+        await asyncio.to_thread(compile_user_strategy, new_name, new_source, new_kind)
     except StrategyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:
