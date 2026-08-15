@@ -23,7 +23,7 @@ export default function BrinsonBarChart({ brinson, height = 340 }: Props) {
   const option = {
     ...theme,
     tooltip: { ...theme.tooltip, trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { ...theme.legend, data: series.map((s) => s.name) },
+    legend: { ...theme.legend, data: series.map((s) => s.name), top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       ...theme.xAxis,

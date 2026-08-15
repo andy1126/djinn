@@ -43,7 +43,7 @@ export default function EquityCurveChart({ equity, benchmark, logScale, height =
   const option = {
     ...theme,
     tooltip: { trigger: 'axis' },
-    legend: { data: ['策略净值', '基准'], textStyle: theme.legend.textStyle },
+    legend: { data: ['策略净值', '基准'], textStyle: theme.legend.textStyle, top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'time', ...theme.xAxis },
     yAxis: {

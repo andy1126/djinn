@@ -20,7 +20,7 @@ export default function FactorDistChart({ exposures, height = 320 }: Props) {
   const option = {
     ...theme,
     tooltip: { ...theme.tooltip, trigger: 'axis' },
-    legend: { data: exposures.columns },
+    legend: { data: exposures.columns, top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { ...theme.xAxis, type: 'time' },
     yAxis: { ...theme.yAxis, type: 'value' },

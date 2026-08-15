@@ -48,7 +48,7 @@ export default function PriceTradeChart({ prices, trades, height = 420 }: Props)
   const option = {
     ...theme,
     tooltip: { ...theme.tooltip, trigger: 'axis' },
-    legend: { data: [...symbols, '买入', '卖出'] },
+    legend: { data: [...symbols, '买入', '卖出'], top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { ...theme.xAxis, type: 'time' },
     yAxis: { ...theme.yAxis, type: 'value', scale: true },
