@@ -52,6 +52,16 @@ const http = axios.create({
   timeout: 60000,
 })
 
+// F7:全局响应拦截器——在错误对象上挂友好消息(列表页内联展示,不全局弹窗)
+http.interceptors.response.use(
+  (resp) => resp,
+  (err) => {
+    err.friendlyMessage =
+      err?.response?.data?.detail ?? err?.message ?? '请求失败'
+    return Promise.reject(err)
+  },
+)
+
 // ── 策略 ─────────────────────────────────────────────
 export const listStrategies = async (): Promise<StrategyListResponse> =>
   (await http.get('/strategies')).data
@@ -130,6 +140,10 @@ export const exportBacktest = async (
   })
   return res.data
 }
+
+// ── 取消任务(E4/F17:统一端点)─────────────────────────────
+export const cancelJob = async (jobId: string): Promise<{ status: string }> =>
+  (await http.post(`/jobs/${jobId}/cancel`)).data
 
 // ── 扫描 ─────────────────────────────────────────────
 export const createSweep = async (req: SweepRequest): Promise<JobCreated> =>

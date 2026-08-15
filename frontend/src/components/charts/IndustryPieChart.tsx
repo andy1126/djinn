@@ -29,5 +29,5 @@ export default function IndustryPieChart({ industryDistribution, height = 320 }:
       },
     ],
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

@@ -11,6 +11,7 @@ import {
   updateUserIndicator, validateUserIndicator,
 } from '@/api/client'
 import type { IndicatorInfo, UserIndicator, UserIndicatorValidateResponse } from '@/types'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 
 const DEFAULT_TEMPLATE = `def my_roc(close, n=5):
     # N 日变动率
@@ -26,7 +27,7 @@ export default function IndicatorLibraryPage() {
   const [code, setCode] = useState(DEFAULT_TEMPLATE)
   const [validate, setValidate] = useState<UserIndicatorValidateResponse | null>(null)
 
-  const { data: catalog, isLoading } = useQuery({ queryKey: ['indicators'], queryFn: listIndicators })
+  const { data: catalog, isLoading, isError: indicatorsError, refetch: refetchIndicators } = useQuery({ queryKey: ['indicators'], queryFn: listIndicators })
   const { data: userIndicators } = useQuery({ queryKey: ['user-indicators'], queryFn: listUserIndicators })
 
   const invalidate = () => {
@@ -125,6 +126,9 @@ export default function IndicatorLibraryPage() {
         <Typography.Paragraph type="secondary">
           编写策略时可直接调用的指标。点「查看」可看签名与实现逻辑;自定义指标见下方编辑器。
         </Typography.Paragraph>
+        {indicatorsError && (
+          <QueryErrorAlert error={indicatorsError} retry={refetchIndicators} />
+        )}
         <Table
           columns={catalogColumns}
           dataSource={catalog?.indicators || []}

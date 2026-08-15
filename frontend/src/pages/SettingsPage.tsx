@@ -1,6 +1,5 @@
-import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Card, Space, Switch, message } from 'antd'
+import { Alert, Card, Space, Switch } from 'antd'
 import { healthCheck } from '@/api/client'
 import { useUiStore } from '@/store/uiStore'
 
@@ -13,12 +12,6 @@ export default function SettingsPage() {
   const dark = useUiStore((s) => s.dark)
   const toggle = useUiStore((s) => s.toggle)
 
-  useEffect(() => {
-    if (error) {
-      message.error('后端服务不可达')
-    }
-  }, [error])
-
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="外观">
@@ -28,7 +21,12 @@ export default function SettingsPage() {
         </Space>
       </Card>
       <Card title="系统状态">
-        <p>后端: {health?.status === 'healthy' ? '🟢 正常' : '🔴 不可达'}</p>
+        {/* F5:错误内联展示,去掉 5s 一次的 message 弹窗刷屏 */}
+        {error ? (
+          <Alert type="error" showIcon message="后端服务不可达" />
+        ) : (
+          <p>后端: {health?.status === 'healthy' ? '🟢 正常' : '🔴 不可达'}</p>
+        )}
         <p>API 地址: <code>localhost:8000</code></p>
       </Card>
     </Space>

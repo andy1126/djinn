@@ -28,5 +28,5 @@ export default function PositionAreaChart({ weights, height = 280 }: Props) {
     yAxis: { type: 'value', max: 1, axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' } },
     series,
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

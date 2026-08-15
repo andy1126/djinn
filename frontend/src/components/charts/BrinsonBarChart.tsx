@@ -30,5 +30,5 @@ export default function BrinsonBarChart({ brinson, height = 340 }: Props) {
     yAxis: { type: 'value' },
     series,
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

@@ -11,6 +11,7 @@ import {
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import StrategyParamForm from '@/components/StrategyParamForm'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 import type { UserStrategy, UserStrategyValidateResponse } from '@/types'
 
 const DEFAULT_TEMPLATE = `fast = param(10, min=2, max=100)
@@ -34,7 +35,7 @@ export default function StrategyPage() {
   const qc = useQueryClient()
   const { config, updateConfig } = useConfigStore()
 
-  const { data: allResp } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
+  const { data: allResp, isError: strategiesError, refetch: refetchStrategies } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
   const { data: userList, isLoading: userLoading } = useQuery({
     queryKey: ['user-strategies'],
     queryFn: listUserStrategies,
@@ -177,6 +178,9 @@ export default function StrategyPage() {
           extra={<Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>新建</Button>}
         >
           <Typography.Text type="secondary">内置策略</Typography.Text>
+          {strategiesError && (
+            <QueryErrorAlert error={strategiesError} retry={refetchStrategies} />
+          )}
           <List
             size="small"
             dataSource={builtins}

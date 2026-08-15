@@ -26,5 +26,5 @@ export default function DrawdownChart({ drawdown, height = 240 }: Props) {
       },
     ],
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

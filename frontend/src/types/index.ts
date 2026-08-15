@@ -11,6 +11,7 @@ export interface ParamSchema {
   max: number | null
   choices: (string | number)[] | null
   description: string | null
+  required: boolean
 }
 
 export interface StrategyInfo {
@@ -110,11 +111,10 @@ export interface JobCreated {
 export interface JobStatus {
   job_id: string
   title: string
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
   progress: number
   stage: string
   error: string | null
-  result_path: string | null
   result?: Record<string, unknown> | null
   kind?: string
 }
@@ -133,7 +133,7 @@ export interface PeriodConfig {
 
 export interface AccountConfig {
   initial_cash: number
-  currency: string
+  currency: string | null
   t_plus_1?: boolean | null
 }
 
@@ -146,7 +146,7 @@ export interface CommissionConfig {
 }
 
 export interface SlippageConfig {
-  type: 'zero' | 'none' | 'fixed_bps' | 'fixed' | 'random' | 'volume_share'
+  type: 'zero' | 'fixed_bps' | 'fixed' | 'random' | 'volume_share'
   bps?: number
 }
 
@@ -420,6 +420,7 @@ export interface FactorReport {
   monotonicity: number
   turnover: number
   ic_by_group: SeriesData
+  recommended_rebalance: string | null
 }
 
 // ── 选股 ───────────────────────────────────────────────

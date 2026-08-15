@@ -14,6 +14,7 @@ import {
 } from '@/api/client'
 import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, IndexInfo, JobStatus, ParamSchema } from '@/types'
 import MatrixHeatmap from '@/components/charts/MatrixHeatmap'
+import JobHistoryTable from '@/components/JobHistoryTable'
 import { CORR_MATRIX_TIP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
@@ -76,7 +77,8 @@ function paramWidget(p: ParamSchema, value: any, onSet: (v: any) => void) {
   )
 }
 
-let _uid = 0
+// F10:随机种子避免 HMR 重载后计数器归零与既有 state 的 uid 冲突
+let _uid = Math.floor(Math.random() * 1_000_000)
 
 /** 带 tooltip 的表头文本(悬停显示指标含义)。 */
 function HelpTitle({ text, tip }: { text: string; tip: string }) {
@@ -94,7 +96,6 @@ export default function FactorMatrixPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
   const [jobId, setJobId] = useState<string | null>(null)
-  const [report, setReport] = useState<FactorMatrixReport | null>(null)
   const [drafts, setDrafts] = useState<PointDraft[]>([])
 
   const { data: factorsResp, isLoading: factorsLoading } = useQuery({
@@ -137,18 +138,15 @@ export default function FactorMatrixPage() {
     queryFn: () => getFactorMatrixJob(jobId!),
     enabled: !!jobId,
     refetchInterval: (q) => {
-      const s = (q.state.data as any)?.status
+      const s = q.state.data?.status
       return s === 'pending' || s === 'running' ? 2000 : false
     },
   })
-  const job = poll.data as any
-  useQuery({
+  const job = poll.data
+  // F6:queryFn 无副作用,直接消费 data
+  const { data: report } = useQuery<FactorMatrixReport>({
     queryKey: ['factor-matrix-report', jobId],
-    queryFn: async () => {
-      const r = await getFactorMatrixReport(jobId!)
-      setReport(r)
-      return r
-    },
+    queryFn: () => getFactorMatrixReport(jobId!),
     enabled: !!jobId && job?.status === 'done',
   })
 
@@ -156,7 +154,6 @@ export default function FactorMatrixPage() {
     mutationFn: createFactorMatrix,
     onSuccess: (resp) => {
       setJobId(resp.job_id)
-      setReport(null)
       message.success(`多因子诊断任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['factor-matrix-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['factor-matrix-jobs'] })
@@ -374,31 +371,9 @@ export default function FactorMatrixPage() {
       {jobId && !job && <Spin />}
 
       <Card title="历史多因子诊断任务">
-        <Table
-          columns={[
-            {
-              title: '任务', key: 'job_id',
-              render: (_: any, r: JobStatus) => (
-                <Space direction="vertical" size={0}>
-                  <span>{r.title || r.job_id}</span>
-                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
-                </Space>
-              ),
-            },
-            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
-            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
-            { title: '阶段', dataIndex: 'stage', key: 'stage' },
-            { title: '错误', dataIndex: 'error', key: 'error', render: (e: string) => e || '—' },
-            {
-              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
-                <Button size="small" onClick={() => { setJobId(r.job_id); setReport(null) }}>查看</Button>
-              ),
-            },
-          ]}
-          dataSource={(historyJobs || []) as JobStatus[]}
-          rowKey="job_id"
-          size="small"
-          pagination={{ pageSize: 10 }}
+        <JobHistoryTable
+          jobs={(historyJobs || []) as JobStatus[]}
+          onOpen={(id) => setJobId(id)}
         />
       </Card>
     </Space>

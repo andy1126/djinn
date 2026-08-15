@@ -24,5 +24,5 @@ export default function FactorDistChart({ exposures, height = 320 }: Props) {
     dataZoom: [{ type: 'inside', start: 0, end: 100 }],
     series,
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

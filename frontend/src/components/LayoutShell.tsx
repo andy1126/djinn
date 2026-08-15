@@ -124,7 +124,12 @@ export default function LayoutShell() {
         }}
       >
         <Layout style={{ minHeight: '100vh' }}>
-          <Sider width={224} style={{ background: token.colorBgContainer }}>
+          <Sider
+            width={224}
+            breakpoint="lg"
+            collapsedWidth="0"
+            style={{ background: token.colorBgContainer }}
+          >
             <div style={{ height: 56, padding: 16, fontSize: 18, fontWeight: 700, color: token.colorPrimary }}>
               Djinn 量化回测
             </div>

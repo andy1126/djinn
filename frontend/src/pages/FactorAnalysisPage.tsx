@@ -12,9 +12,10 @@ import {
   getFactorAnalysisJob,
   getFactorAnalysisReport,
 } from '@/api/client'
-import type { FactorInfo, IndexInfo, JobStatus, ParamSchema } from '@/types'
+import type { FactorInfo, FactorReport, IndexInfo, JobStatus, ParamSchema } from '@/types'
 import QuantileCurveChart from '@/components/charts/QuantileCurveChart'
 import ICBarChart from '@/components/charts/ICBarChart'
+import JobHistoryTable from '@/components/JobHistoryTable'
 import { IC_RANGE_HELP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
@@ -90,7 +91,6 @@ export default function FactorAnalysisPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
   const [jobId, setJobId] = useState<string | null>(null)
-  const [report, setReport] = useState<any | null>(null)
   const [selected, setSelected] = useState<FactorInfo | null>(null)
   const [params, setParams] = useState<Record<string, any>>({})
 
@@ -134,19 +134,15 @@ export default function FactorAnalysisPage() {
     queryFn: () => getFactorAnalysisJob(jobId!),
     enabled: !!jobId,
     refetchInterval: (q) => {
-      const s = (q.state.data as any)?.status
+      const s = q.state.data?.status
       return s === 'pending' || s === 'running' ? 2000 : false
     },
   })
-  const job = poll.data as any
-  // 完成后取报告
-  useQuery({
+  const job = poll.data
+  // 完成后取报告(F6:queryFn 无副作用,直接消费 data)
+  const { data: report } = useQuery<FactorReport>({
     queryKey: ['factor-analysis-report', jobId],
-    queryFn: async () => {
-      const r = await getFactorAnalysisReport(jobId!)
-      setReport(r)
-      return r
-    },
+    queryFn: () => getFactorAnalysisReport(jobId!),
     enabled: !!jobId && job?.status === 'done',
   })
 
@@ -154,7 +150,6 @@ export default function FactorAnalysisPage() {
     mutationFn: createFactorAnalysis,
     onSuccess: (resp) => {
       setJobId(resp.job_id)
-      setReport(null)
       message.success(`因子分析任务已创建: ${resp.job_id}`)
       qc.invalidateQueries({ queryKey: ['factor-analysis-job', resp.job_id] })
       qc.invalidateQueries({ queryKey: ['factor-analysis-jobs'] })
@@ -298,31 +293,9 @@ export default function FactorAnalysisPage() {
       {jobId && !job && <Spin />}
 
       <Card title="历史因子分析任务">
-        <Table
-          columns={[
-            {
-              title: '任务', key: 'job_id',
-              render: (_: any, r: JobStatus) => (
-                <Space direction="vertical" size={0}>
-                  <span>{r.title || r.job_id}</span>
-                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
-                </Space>
-              ),
-            },
-            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
-            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
-            { title: '阶段', dataIndex: 'stage', key: 'stage' },
-            { title: '错误', dataIndex: 'error', key: 'error', render: (e: string) => e || '—' },
-            {
-              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
-                <Button size="small" onClick={() => { setJobId(r.job_id); setReport(null) }}>查看</Button>
-              ),
-            },
-          ]}
-          dataSource={(historyJobs || []) as JobStatus[]}
-          rowKey="job_id"
-          size="small"
-          pagination={{ pageSize: 10 }}
+        <JobHistoryTable
+          jobs={(historyJobs || []) as JobStatus[]}
+          onOpen={(id) => setJobId(id)}
         />
       </Card>
     </Space>

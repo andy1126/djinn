@@ -14,6 +14,7 @@ import {
   getScreenJob,
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
+import JobHistoryTable from '@/components/JobHistoryTable'
 import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket } from '@/types'
 
 const OPS = ['gt', 'lt', 'ge', 'le', 'eq', 'between', 'in']
@@ -355,30 +356,9 @@ export default function ScreenerPage() {
       )}
 
       <Card title="历史选股任务">
-        <Table
-          columns={[
-            {
-              title: '任务', key: 'job_id',
-              render: (_: any, r: JobStatus) => (
-                <Space direction="vertical" size={0}>
-                  <span>{r.title || r.job_id}</span>
-                  <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
-                </Space>
-              ),
-            },
-            { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
-            { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
-            { title: '阶段', dataIndex: 'stage', key: 'stage' },
-            {
-              title: '操作', key: 'action', render: (_: any, r: JobStatus) => (
-                <Button size="small" onClick={() => selectJob(r.job_id)}>查看</Button>
-              ),
-            },
-          ]}
-          dataSource={(historyJobs || []) as JobStatus[]}
-          rowKey="job_id"
-          size="small"
-          pagination={{ pageSize: 10 }}
+        <JobHistoryTable
+          jobs={(historyJobs || []) as JobStatus[]}
+          onOpen={(id) => selectJob(id)}
         />
       </Card>
     </Space>

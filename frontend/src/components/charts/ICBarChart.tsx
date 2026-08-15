@@ -26,5 +26,5 @@ export default function ICBarChart({ ic, height = 320 }: Props) {
       },
     ],
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

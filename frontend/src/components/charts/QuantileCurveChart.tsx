@@ -31,5 +31,5 @@ export default function QuantileCurveChart({ quantileReturns, height = 340 }: Pr
     },
     series,
   }
-  return <ReactECharts option={option} style={{ height }} />
+  return <ReactECharts option={option} notMerge style={{ height }} />
 }

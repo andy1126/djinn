@@ -3,6 +3,7 @@ import { Card, Empty, Table, Typography } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import { getBacktestReport } from '@/api/client'
 import type { BacktestReport } from '@/types'
+import { fmtNum, fmtPct } from '@/utils/format'
 
 interface CompareRow {
   jobId: string
@@ -13,8 +14,8 @@ interface Props {
   jobIds: string[]
 }
 
-const fmtPct = (v: number, d = 2) => (v * 100).toFixed(d) + '%'
-const fmtNum = (v: number, d = 2) => v.toFixed(d)
+// F15:legend/表头用可读短码(前 6 位),完整 id 放 tooltip
+const shortId = (id: string) => (id.length > 6 ? id.slice(0, 6) : id)
 
 export default function ReportCompare({ jobIds }: Props) {
   const { data: reports, isLoading } = useQuery({
@@ -37,16 +38,20 @@ export default function ReportCompare({ jobIds }: Props) {
 
   const chartOption = (() => {
     if (!reports || reports.length === 0) return {}
-    const series = reports.map((r) => ({
-      name: r.jobId,
-      type: 'line',
-      showSymbol: false,
-      lineStyle: { width: 1.5 },
-      data: r.report.equity_curve.values.map((v, i) => [r.report.equity_curve.index[i], v]),
-    }))
+    const series = reports.map((r) => {
+      const vals = r.report.equity_curve.values
+      const base = vals[0] || 1 // F15:起点归一化(各序列起点对齐到 1.0)
+      return {
+        name: shortId(r.jobId),
+        type: 'line',
+        showSymbol: false,
+        lineStyle: { width: 1.5 },
+        data: vals.map((v, i) => [r.report.equity_curve.index[i], v / base]),
+      }
+    })
     return {
       tooltip: { trigger: 'axis' },
-      legend: { data: reports.map((r) => r.jobId) },
+      legend: { data: reports.map((r) => shortId(r.jobId)) },
       grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
       xAxis: { type: 'time' },
       yAxis: { type: 'value' },
@@ -54,18 +59,36 @@ export default function ReportCompare({ jobIds }: Props) {
     }
   })()
 
+  const metricRows = ['total_return', 'annual_return', 'sharpe', 'max_drawdown', 'calmar', 'win_rate', 'n_trades', 'turnover']
+  // F15:越大越好的指标(含 max_drawdown,存为 ≤0 负值,越接近 0 越好);
+  // n_trades/turnover 无方向,不高亮。
+  const METRIC_BETTER_HIGHER = new Set(['total_return', 'annual_return', 'sharpe', 'calmar', 'win_rate', 'max_drawdown'])
+  const bestByMetric: Record<string, string> = {}
+  for (const m of metricRows) {
+    if (!METRIC_BETTER_HIGHER.has(m)) continue
+    let bestId = ''
+    let bestVal = -Infinity
+    reports?.forEach((r) => {
+      const v = (r.report.metrics as any)[m] as number
+      if (v != null && !Number.isNaN(v) && v > bestVal) { bestVal = v; bestId = r.jobId }
+    })
+    if (bestId) bestByMetric[m] = bestId
+  }
+
   const columns = [
     { title: '指标', dataIndex: 'metric', key: 'metric', fixed: 'left' as const, width: 120 },
     ...jobIds.map((id) => ({
-      title: id,
+      title: shortId(id),
       dataIndex: id,
       key: id,
       width: 120,
-      render: (v: any) => v,
+      render: (v: string, row: Record<string, string>) => ({
+        children: v,
+        props: bestByMetric[row.metric] === id ? { style: { background: '#f6ffed', fontWeight: 600 } } : {},
+      }),
     })),
   ]
 
-  const metricRows = ['total_return', 'annual_return', 'sharpe', 'max_drawdown', 'calmar', 'win_rate', 'n_trades', 'turnover']
   const dataSource = metricRows.map((m) => {
     const row: any = { key: m, metric: m }
     reports?.forEach((r) => {
@@ -93,7 +116,7 @@ export default function ReportCompare({ jobIds }: Props) {
   return (
     <>
       <Card title="净值曲线对比" style={{ marginBottom: 16 }}>
-        <ReactECharts option={chartOption} style={{ height: 400 }} />
+        <ReactECharts option={chartOption} notMerge style={{ height: 400 }} />
       </Card>
       <Card title="指标对比表">
         <Table columns={columns} dataSource={dataSource} size="small" pagination={false} scroll={{ x: 'max-content' }} />

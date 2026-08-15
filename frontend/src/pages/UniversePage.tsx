@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import {
-  AutoComplete, Button, Card, Col, Descriptions, Dropdown, Empty, Input, Row, Segmented, Select, Space, Spin, Tag, Typography, message,
+  AutoComplete, Button, Card, Col, Descriptions, Dropdown, Empty, Input, Pagination, Row, Segmented, Select, Space, Spin, Tag, Typography, message,
 } from 'antd'
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { getIndexComponents, getStockDetail, listIndexes, listProfiles, searchStocks, updateProfile } from '@/api/client'
 import type { IndexInfo, Profile, StockDetail as StockDetailT, SymbolSearchResult } from '@/types'
 import ProfileManager from '@/components/ProfileManager'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 
 const HISTORY_KEY = 'djinn:recent_stocks'
 const HISTORY_MAX = 10
@@ -225,11 +226,15 @@ export default function UniversePage() {
   })
   const [market, setMarket] = useState<string>('US')
   const [query, setQuery] = useState('')
+  // F11:搜索防抖(输入 300ms 后触发请求,快速输入不逐字打网络)
+  const debouncedQuery = useDebouncedValue(query, 300)
   const [selected, setSelected] = useState<SymbolSearchResult | null>(null)
   const [detail, setDetail] = useState<StockDetailT | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [history, setHistory] = useState<HistoryItem[]>(loadHistory)
   const [index, setIndex] = useState<string>('CSI300')
+  // F20:指数成分大列表分页(每页 100,避免 800 只全量渲染)
+  const [compPage, setCompPage] = useState<number>(1)
 
   const { data: indexes } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
   const qc = useQueryClient()
@@ -264,9 +269,9 @@ export default function UniversePage() {
   })
 
   const { data: searchResp, isFetching: searching } = useQuery({
-    queryKey: ['stock-search', query, market],
-    queryFn: () => searchStocks(query, market),
-    enabled: tab === 'search' && query.trim().length >= 1,
+    queryKey: ['stock-search', debouncedQuery, market],
+    queryFn: () => searchStocks(debouncedQuery, market),
+    enabled: tab === 'search' && debouncedQuery.trim().length >= 1,
   })
   const searchOptions = (searchResp?.results || []).map((r) => ({
     value: r.symbol,
@@ -399,7 +404,7 @@ export default function UniversePage() {
             <Select
               style={{ width: 240 }}
               value={index}
-              onChange={setIndex}
+              onChange={(v) => { setIndex(v); setCompPage(1) }}
               options={indexOptions}
               showSearch
               optionFilterProp="label"
@@ -416,15 +421,24 @@ export default function UniversePage() {
                 {indexNames[index] || index} · {indexComps.data?.count ?? 0} 只
               </Typography.Text>
               <Row gutter={[8, 8]}>
-                {(indexComps.data?.symbols || []).map((s, i) => (
-                  <Col span={6} key={i}>
+                {(indexComps.data?.symbols || []).slice((compPage - 1) * 100, compPage * 100).map((s, i) => (
+                  <Col xs={12} sm={8} lg={6} key={s}>
                     <Typography.Text code>{s}</Typography.Text>
                     <Typography.Text type="secondary" style={{ marginLeft: 6 }}>
-                      {indexComps.data?.names?.[i] || ''}
+                      {indexComps.data?.names?.[(compPage - 1) * 100 + i] || ''}
                     </Typography.Text>
                   </Col>
                 ))}
               </Row>
+              {(indexComps.data?.symbols?.length || 0) > 100 && (
+                <Pagination
+                  simple
+                  pageSize={100}
+                  current={compPage}
+                  total={indexComps.data?.symbols?.length || 0}
+                  onChange={setCompPage}
+                />
+              )}
             </Space>
           )}
         </Card>

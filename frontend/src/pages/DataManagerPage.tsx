@@ -4,6 +4,7 @@ import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tab
 import dayjs from 'dayjs'
 import { fetchData, listCache, clearCache, getCacheContent } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 import type { CacheEntry, Profile } from '@/types'
 
 const { RangePicker } = DatePicker
@@ -25,7 +26,7 @@ export default function DataManagerPage() {
   const [symbols, setSymbols] = useState<string[]>(['NVDA'])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
 
-  const { data: cache } = useQuery({
+  const { data: cache, isError: cacheError, refetch: refetchCache } = useQuery({
     queryKey: ['cache'],
     queryFn: listCache,
   })
@@ -167,7 +168,9 @@ export default function DataManagerPage() {
           items={dtypeTabs.map((t) => ({
             key: t.key,
             label: t.label,
-            children: (
+            children: cacheError ? (
+              <QueryErrorAlert error={cacheError} retry={refetchCache} />
+            ) : (
               <Table
                 columns={cacheColumns}
                 dataSource={entries.filter((e) => dtypeOf(e.file) === t.key)}

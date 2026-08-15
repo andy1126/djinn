@@ -1,55 +1,62 @@
-import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Button, Card, Empty, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button, Card, Empty, Popconfirm, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
-import { listBacktests } from '@/api/client'
+import { cancelJob, listBacktests } from '@/api/client'
 import type { JobStatus } from '@/types'
 import ReportDetail from '@/components/ReportDetail'
 import ReportCompare from '@/components/ReportCompare'
 
 const statusColor: Record<string, string> = {
-  pending: 'default', running: 'processing', done: 'success', error: 'error',
+  pending: 'default', running: 'processing', done: 'success', error: 'error', cancelled: 'default',
 }
 
 const statusLabel: Record<string, string> = {
-  pending: '排队中', running: '运行中', done: '已完成', error: '失败',
+  pending: '排队中', running: '运行中', done: '已完成', error: '失败', cancelled: '已取消',
 }
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const { jobId } = useParams()
 
   const [detailJobId, setDetailJobId] = useState<string | null>(null)
   const [compareJobIds, setCompareJobIds] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<'detail' | 'compare'>('detail')
-  const resultRef = useRef<HTMLDivElement>(null)
 
-  const scrollToResult = () => {
-    // 等报告渲染一帧后再滚动,避免目标高度尚未确定
-    setTimeout(() => {
-      resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }, 80)
-  }
+  const cancelMut = useMutation({
+    mutationFn: cancelJob,
+    onSuccess: () => {
+      message.success('已请求取消')
+      qc.invalidateQueries({ queryKey: ['backtests'] })
+    },
+    onError: (e: unknown) =>
+      message.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '取消失败'),
+  })
 
-  // 深链 /results/:jobId → 预选该任务并切到详情
+  // 深链 /results/:jobId → 预选该任务并切到详情(滚动由 ReportDetail 挂载后自处理)
   useEffect(() => {
     if (jobId) {
       setDetailJobId(jobId)
       setActiveTab('detail')
-      scrollToResult()
     }
   }, [jobId])
 
   const { data: jobs, isLoading } = useQuery({
     queryKey: ['backtests'],
     queryFn: () => listBacktests(100),
-    refetchInterval: 3000,
+    // F4:有进行中任务才轮询,否则停摆
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some(
+        (j) => j.status === 'pending' || j.status === 'running',
+      )
+        ? 3000
+        : false,
   })
 
   const openDetail = (id: string) => {
     setDetailJobId(id)
     setActiveTab('detail')
-    scrollToResult()
   }
 
   const columns = [
@@ -86,15 +93,25 @@ export default function DashboardPage() {
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 160,
       render: (_: unknown, rec: JobStatus) => (
-        <Button
-          type="link"
-          disabled={rec.status !== 'done'}
-          onClick={() => openDetail(rec.job_id)}
-        >
-          查看结果
-        </Button>
+        <Space size={0}>
+          <Button
+            type="link"
+            disabled={rec.status !== 'done'}
+            onClick={() => openDetail(rec.job_id)}
+          >
+            查看结果
+          </Button>
+          {(rec.status === 'pending' || rec.status === 'running') && (
+            <Popconfirm
+              title="取消此任务?"
+              onConfirm={() => cancelMut.mutate(rec.job_id)}
+            >
+              <Button type="link" danger>取消</Button>
+            </Popconfirm>
+          )}
+        </Space>
       ),
     },
   ]
@@ -142,7 +159,7 @@ export default function DashboardPage() {
         />
       </Card>
 
-      <div ref={resultRef}>
+      <div>
         <Card>
           <Tabs
             activeKey={activeTab}

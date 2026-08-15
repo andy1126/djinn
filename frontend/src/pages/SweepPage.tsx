@@ -5,6 +5,7 @@ import {
 } from 'antd'
 import { createSweep, listSweeps } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
+import JobHistoryTable from '@/components/JobHistoryTable'
 import type { JobStatus, SweepResultRow } from '@/types'
 
 /**
@@ -31,7 +32,8 @@ interface AxisDraft {
   valuesRaw: string
 }
 
-let _uid = 0
+// F10:随机种子避免 HMR 重载后计数器归零与既有 state 的 uid 冲突
+let _uid = Math.floor(Math.random() * 1_000_000)
 
 /** 把单行草案解析成 grid entry。 */
 function draftToGridEntry(d: AxisDraft): [string, (number | string)[]] | null {
@@ -164,23 +166,6 @@ export default function SweepPage() {
       (r as any).n_trades ?? '—' },
   ]
 
-  const columns = [
-    {
-      title: '任务',
-      key: 'job_id',
-      render: (_: any, r: JobStatus) => (
-        <Space direction="vertical" size={0}>
-          <span>{r.title || r.job_id}</span>
-          <Typography.Text code type="secondary">{r.job_id}</Typography.Text>
-        </Space>
-      ),
-    },
-    { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => <Tag color={s === 'done' ? 'success' : s === 'error' ? 'error' : 'processing'}>{s}</Tag> },
-    { title: '进度', dataIndex: 'progress', key: 'progress', render: (p: number) => <Progress percent={Math.round(p * 100)} size="small" /> },
-    { title: '阶段', dataIndex: 'stage', key: 'stage' },
-    { title: '错误', dataIndex: 'error', key: 'error', render: (e: string) => e || '—' },
-  ]
-
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Typography.Title level={3}>参数扫描</Typography.Title>
@@ -301,12 +286,9 @@ export default function SweepPage() {
       )}
 
       <Card title="历史扫描任务">
-        <Table
-          columns={columns}
-          dataSource={(jobs || []) as JobStatus[]}
-          rowKey="job_id"
-          size="small"
-          pagination={{ pageSize: 10 }}
+        <JobHistoryTable
+          jobs={(jobs || []) as JobStatus[]}
+          onOpen={(id) => setJobId(id)}
         />
       </Card>
     </Space>
