@@ -3,10 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Button, Card, Checkbox, Form, Input, message, Progress, Select, Segmented, Space, Table, Tag, Typography,
 } from 'antd'
-import { createSweep, errDetail, listSweeps } from '@/api/client'
+import { createSweep, errDetail, getStrategy, listSweeps } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import JobHistoryTable from '@/components/JobHistoryTable'
-import type { JobStatus, SweepResultRow } from '@/types'
+import type { JobStatus, ParamSchema, SweepResultRow } from '@/types'
 
 /**
  * sweep 可扫轴(与后端 cli/sweep.py:ALLOWED_SWEEP_AXES 同步)。
@@ -34,6 +34,24 @@ interface AxisDraft {
 
 // F10:随机种子避免 HMR 重载后计数器归零与既有 state 的 uid 冲突
 let _uid = Math.floor(Math.random() * 1_000_000)
+
+/** 按策略参数 schema 生成默认扫值(choices → 全选;bool → true/false;数值 → min/default/max)。 */
+function defaultSweepValues(p: ParamSchema): string {
+  if (p.choices && p.choices.length > 0) {
+    return p.choices.join(',')
+  }
+  if (p.type === 'bool' || p.type === 'boolean') {
+    return 'true,false'
+  }
+  if (p.min != null && p.max != null) {
+    const vals = new Set<number | string>()
+    vals.add(p.min)
+    if (typeof p.default === 'number') vals.add(p.default)
+    vals.add(p.max)
+    return Array.from(vals).join(',')
+  }
+  return ''
+}
 
 /** 把单行草案解析成 grid entry。 */
 function draftToGridEntry(d: AxisDraft): [string, (number | string)[]] | null {
@@ -75,6 +93,23 @@ export default function SweepPage() {
       return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
     },
   })
+
+  // 策略参数 schema(供「策略参数」扫轴的下拉 + 默认扫值联动)
+  const { data: strategyInfo } = useQuery({
+    queryKey: ['strategy', config.strategy.name],
+    queryFn: () => getStrategy(config.strategy.name),
+  })
+  const strategyParams: ParamSchema[] = strategyInfo?.params || []
+  const paramByName = new Map(strategyParams.map((p) => [p.name, p]))
+  const paramOptions = strategyParams.map((p) => ({
+    value: p.name,
+    label: `${p.name} (${p.type})`,
+  }))
+
+  const onParamSelect = (uid: number, name: string) => {
+    const p = paramByName.get(name)
+    update(uid, { paramKey: name, valuesRaw: p ? defaultSweepValues(p) : '' })
+  }
 
   const sweepMut = useMutation({
     mutationFn: createSweep,
@@ -198,11 +233,14 @@ export default function SweepPage() {
                       style={{ width: 280 }}
                     />
                     {d.axis === '__param__' && (
-                      <Input
-                        placeholder="参数名(如 fast)"
-                        value={d.paramKey}
-                        onChange={(e) => update(d.uid, { paramKey: e.target.value })}
-                        style={{ width: 140 }}
+                      <Select
+                        placeholder="选择参数"
+                        value={d.paramKey || undefined}
+                        onChange={(v) => onParamSelect(d.uid, v as string)}
+                        options={paramOptions}
+                        showSearch
+                        optionFilterProp="label"
+                        style={{ width: 200 }}
                       />
                     )}
                     {d.axis === 'portfolio.allocation' ? (
