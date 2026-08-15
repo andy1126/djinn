@@ -21,6 +21,7 @@ from djinn.data.schema import (
     Market,
 )
 from djinn.engine import EngineConfig, EventDrivenEngine
+from djinn.factor.base import Factor
 from djinn.factor.library.momentum import MomentumFactor
 from djinn.factor.library.quality import ROEFactor
 from djinn.factor.library.value import EPFactor
@@ -131,6 +132,52 @@ def test_score_cross_section_ordering() -> None:
     assert s["A"] > s["B"] > s["C"]
 
 
+def test_score_missing_factor_warns_once_and_meta(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """C14:缺失打分因子只告警一次,LAST_SCORE_META 记录实际参与/缺失名单。"""
+    from djinn.screen.scoring import _WARNED_MISSING, LAST_SCORE_META
+
+    cross = pd.DataFrame({"ep": [0.10, 0.05, 0.02]}, index=["A", "B", "C"])
+    scores = [
+        FactorScore(factor="ep", weight=1.0),
+        FactorScore(factor="missing_factor", weight=1.0),
+    ]
+    _WARNED_MISSING.discard("missing_factor")
+    with caplog.at_level("WARNING", logger="djinn.screen.scoring"):
+        score_cross_section(cross, scores)
+        score_cross_section(cross, scores)
+    warns = [r for r in caplog.records if "missing_factor" in r.getMessage()]
+    assert len(warns) == 1, "缺失因子应只告警一次"
+    assert LAST_SCORE_META["factors_used"] == ["ep"]
+    assert LAST_SCORE_META["missing"] == ["missing_factor"]
+
+
+def test_score_cross_section_orthogonalize() -> None:
+    """正交化剥离后序因子中与前序因子的线性重叠(C10 接线)。"""
+    scores = [
+        FactorScore(factor="f1", weight=1.0),
+        FactorScore(factor="f2", weight=1.0),
+    ]
+    # 正交因子(中心化内积=0):正交化无可剥离重叠,得分不变
+    ortho_cross = pd.DataFrame(
+        {"f1": [1.0, 2.0, 3.0, 4.0], "f2": [1.0, -1.0, -1.0, 1.0]},
+        index=["A", "B", "C", "D"],
+    )
+    plain = score_cross_section(ortho_cross, scores)
+    ortho = score_cross_section(ortho_cross, scores, orthogonalize=True)
+    assert np.allclose(plain, ortho, atol=1e-9)
+    # 部分相关因子(f2 与 f1 有线性重叠):正交化剥离重叠,得分改变
+    corr_cross = pd.DataFrame(
+        {"f1": [1.0, 2.0, 3.0, 4.0], "f2": [2.0, 1.0, 4.0, 3.0]},
+        index=["A", "B", "C", "D"],
+    )
+    assert not np.allclose(
+        score_cross_section(corr_cross, scores),
+        score_cross_section(corr_cross, scores, orthogonalize=True),
+    )
+
+
 def test_score_universe_and_top_n() -> None:
     dates = pd.date_range("2024-01-01", periods=3)
     panel = {
@@ -147,6 +194,29 @@ def test_score_universe_and_top_n() -> None:
 
 
 # ── 动态股票池 ────────────────────────────────────────────
+def test_symbols_on_matches_linear_scan() -> None:
+    """D9:bisect 版 symbols_on 与线性扫结果逐一相等(随机 100 日期)。"""
+    import random
+    from datetime import date, timedelta
+
+    from djinn.screen import DynamicUniverse
+
+    rng = random.Random(1)
+    start = date(2024, 1, 1)
+    mapping = {start + timedelta(days=i): [f"S{i % 5}"] for i in range(0, 60, 3)}
+    uni = DynamicUniverse(mapping)
+    dates = sorted(mapping)
+
+    def linear(when: date) -> list[str]:
+        prior = [d for d in dates if d <= when]
+        return list(mapping[prior[-1]]) if prior else []
+
+    # 覆盖:早于首日 / 恰好记录日 / 两记录日之间 / 晚于末日
+    for _ in range(100):
+        when = start + timedelta(days=rng.randint(-5, 70))
+        assert uni.symbols_on(when) == linear(when), f"{when} 不一致"
+
+
 def test_dynamic_universe_membership_change() -> None:
     sdf = pd.DataFrame(
         {"A": [3.0, 1.0], "B": [2.0, 2.0], "C": [1.0, 3.0]},
@@ -253,3 +323,122 @@ def test_end_to_end_ep_roe_top_n() -> None:
     assert len(held) <= 3
     final_prices = {s: float(data[s].df[COL_CLOSE].iloc[-1]) for s in symbols}
     res.account.check_invariant(final_prices)
+
+
+# ── C5:策略层 neutralize 接线 ────────────────────────────
+class _SectorFactor(Factor):
+    """行业驱动的常数因子:tech 高、fin 低,叠加小噪声(测 neutralize 剥离行业)。"""
+
+    name = "sector_factor"
+    max_lookback = 1
+
+    def __init__(self, values: dict[str, float]) -> None:
+        super().__init__()
+        self._values = values
+
+    def compute(
+        self, prices: pd.DataFrame, ohlcv: dict, fundamentals: dict
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {s: [self._values[s]] * len(prices) for s in prices.columns},
+            index=prices.index,
+        )
+
+
+def test_factor_portfolio_neutralize_reduces_sector_tilt() -> None:
+    """neutralize=True 剥离行业暴露,选股由「全 tech」转为跨行业(C5)。"""
+    days = pd.date_range("2024-01-01", periods=30)
+    symbols = ["S0", "S1", "S2", "S3", "S4", "S5"]
+    industry_map = {s: ("tech" if i < 3 else "fin") for i, s in enumerate(symbols)}
+    rng = np.random.default_rng(7)
+    values = {
+        s: (5.0 if i < 3 else -5.0) + rng.normal(0, 0.5) for i, s in enumerate(symbols)
+    }
+    data = {
+        s: _md(s, {d: 100.0 + 0.1 * j for j, d in enumerate(days)}) for s in symbols
+    }
+
+    def run(neutralize: bool) -> list[str]:
+        strat = FactorPortfolioStrategy(
+            factors=[_SectorFactor(values)],
+            scores=[FactorScore(factor="sector_factor", weight=1.0)],
+            n_stocks=3,
+            rebalance_freq=5,
+            neutralize=neutralize,
+            industry_map=industry_map if neutralize else None,
+        )
+        eng = EventDrivenEngine(EngineConfig(initial_cash=100000.0, calendar="union"))
+        res = eng.run(strat, data)
+        return [s for s in symbols if res.positions_curve[s].iloc[-1] > 0]
+
+    held_plain = run(False)
+    held_neut = run(True)
+
+    def tech_share(held: list[str]) -> float:
+        return sum(1 for s in held if industry_map[s] == "tech") / max(1, len(held))
+
+    # 未中性化:tech 因子值全面占优 → TopN 全 tech
+    assert tech_share(held_plain) == 1.0
+    # 中性化:行业偏差被剥离 → 选股跨行业,tech 占比下降
+    assert tech_share(held_neut) < tech_share(held_plain)
+
+
+# ── C9:icir 加权端到端 ────────────────────────────────────
+class _ConstFactor(Factor):
+    """常数因子(每标的一个固定值),用于构造「有预测力 / 纯噪声」两组因子。"""
+
+    max_lookback = 300
+
+    def __init__(self, name: str, values: dict[str, float]) -> None:
+        super().__init__()
+        self.name = name
+        self._values = values
+
+    def compute(
+        self, prices: pd.DataFrame, ohlcv: dict, fundamentals: dict
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {s: [self._values[s]] * len(prices) for s in prices.columns},
+            index=prices.index,
+        )
+
+
+def _annual_sharpe(eq: pd.Series) -> float:
+    rets = eq.pct_change().dropna()
+    sd = float(rets.std())
+    return float(rets.mean() / sd * np.sqrt(252)) if sd > 0 else 0.0
+
+
+def test_icir_weighting_beats_static() -> None:
+    """端到端(C9):有预测力因子 + 噪声因子,icir 加权夏普显著高于 static 等权。"""
+    n_days, n_syms = 300, 12
+    days = pd.date_range("2024-01-01", periods=n_days)
+    syms = [f"S{i}" for i in range(n_syms)]
+    rng = np.random.default_rng(42)
+    alpha = rng.normal(0, 0.01, n_syms)  # 真实日漂移(年化 ~16%)
+    fa = {s: alpha[i] for i, s in enumerate(syms)}
+    fb = {s: float(rng.normal(0, 0.01)) for s in syms}
+    data: dict[str, MarketData] = {}
+    for i, s in enumerate(syms):
+        rets = alpha[i] + rng.normal(0, 0.02, n_days)
+        close = 100 * np.exp(np.cumsum(rets))
+        data[s] = _md(s, {d: float(c) for d, c in zip(days, close, strict=True)})
+
+    def run(weighting: str) -> float:
+        strat = FactorPortfolioStrategy(
+            factors=[_ConstFactor("alpha", fa), _ConstFactor("noise", fb)],
+            scores=[
+                FactorScore(factor="alpha", weight=1.0),
+                FactorScore(factor="noise", weight=1.0),
+            ],
+            n_stocks=3,
+            rebalance_freq=20,
+            weighting=weighting,
+            icir_window=60,
+            icir_min_periods=20,
+        )
+        eng = EventDrivenEngine(EngineConfig(initial_cash=100000.0, calendar="union"))
+        res = eng.run(strat, data)
+        return _annual_sharpe(res.equity_curve)
+
+    assert run("icir") > run("static") * 1.2

@@ -133,6 +133,70 @@ def test_sortino_no_downside_is_zero():
     assert m.sortino == 0.0
 
 
+def test_sortino_standard():
+    """B3:索提诺标准口径(MAR=rf/af,全样本下行偏差)——与手算公式逐位一致。"""
+    rets = pd.Series(
+        [0.01, -0.02, 0.03, -0.01, 0.02], index=pd.bdate_range("2024-01-02", periods=5)
+    )
+    eq = 100 * (1 + rets).cumprod()
+    m = compute_metrics(eq, market="US", rf=0.0)
+    af = 252.0
+    # compute_metrics 的收益序列 = equity.pct_change() 去首行(NaN)
+    excess = eq.pct_change().dropna().to_numpy()  # rf=0 → mar=0
+    downside = np.minimum(excess, 0.0)
+    downside_dev = np.sqrt((downside**2).mean()) * np.sqrt(af)
+    expected = float(excess.mean() * af / downside_dev)
+    assert m.sortino == pytest.approx(expected, rel=1e-6)
+
+
+def test_monthly_first_month_present():
+    """B5:首月收益(期初→首月末)不再被 dropna 丢掉。"""
+    idx = pd.bdate_range("2020-01-01", periods=23)  # 覆盖 2020-01 整月(1/1~1/31)
+    vals = np.linspace(100000, 105000, 23)
+    eq = pd.Series(vals, index=idx)
+    m = monthly_returns(eq)
+    assert 2020 in m.index, "首月行不应被 dropna 丢掉"
+    first = m.loc[2020].dropna().iloc[0]
+    assert first == pytest.approx(0.05)  # 105000/100000 − 1
+
+
+def test_upside_capture():
+    """B6:策略与基准几乎同步 → upside_capture ≈1。"""
+    idx = pd.bdate_range("2024-01-02", periods=400)
+    rng = np.random.default_rng(1)
+    br = pd.Series(rng.normal(0, 0.01, 400), index=idx)
+    sr = br + rng.normal(0, 0.001, 400)
+    b = pd.Series(100 * np.cumprod(1 + br), index=idx)
+    s = pd.Series(100 * np.cumprod(1 + sr), index=idx)
+    bs = compare_benchmark(s, b, market="US", rf=0.0)
+    assert bs.upside_capture == pytest.approx(1.0, rel=0.1)
+
+
+def test_turnover_annual():
+    """B8:turnover_annual 字段存在,无成交时为 0,有成交时为正。"""
+    idx = pd.bdate_range("2024-01-02", periods=60)
+    eq = pd.Series(100 * np.exp(np.cumsum(np.full(60, 0.001))), index=idx)
+    m0 = compute_metrics(eq, market="US")
+    assert m0.turnover_annual == 0.0
+    # 构造两笔成交(买卖各一,单边成交额=市值一半)
+    from datetime import date
+
+    from djinn.engine.events import Fill
+
+    fills = [
+        Fill(1, date(2024, 2, 1), "S", "buy", 50.0, 100.0, 0.0),
+        Fill(2, date(2024, 2, 2), "S", "sell", 50.0, 100.0, 0.0),
+    ]
+    m1 = compute_metrics(eq, market="US", trades=fills)
+    assert m1.turnover_annual > 0.0
+    # 双边换手 = 2×(50×100)/平均净值;turnover_annual = turnover×af/n/2
+    avg_eq = float(eq.mean())
+    assert m1.turnover == pytest.approx(2 * 5000.0 / avg_eq, rel=1e-6)
+    assert m1.turnover_annual == pytest.approx(
+        m1.turnover * 252.0 / len(eq) / 2.0, rel=1e-6
+    )
+
+
 def test_jensen_alpha_scales_with_beta():
     """B6:策略收益 = 1.2×基准日收益 + 常数 → beta≈1.2,jensen≈常数×af。"""
     idx = pd.bdate_range("2024-01-02", periods=500)

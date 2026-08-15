@@ -24,8 +24,11 @@ from djinn.data.providers.yahoo import (
 from djinn.data.schema import (
     COL_ANNOUNCE_DATE,
     COL_GROSS_MARGIN,
+    COL_NET_PROFIT,
+    COL_OCF,
     COL_PROFIT_YOY,
     COL_REPORT_DATE,
+    COL_REVENUE,
     COL_REVENUE_YOY,
     COL_ROE,
     Market,
@@ -109,6 +112,27 @@ def test_normalize_fin_history_computes_ratios_and_yoy() -> None:
     assert out.loc[pd.Timestamp("2022-12-31"), COL_ANNOUNCE_DATE] == pd.Timestamp(
         "2023-02-14"
     )
+
+
+def test_normalize_fin_history_extracts_ocf() -> None:
+    """OCF 来自 cashflow 表的 ``Operating Cash Flow`` 行(阶段0.5)。"""
+    ist, bs = _fin_frames()
+    cf = pd.DataFrame(
+        {
+            pd.Timestamp("2023-12-31"): [300.0],
+            pd.Timestamp("2022-12-31"): [250.0],
+            pd.Timestamp("2021-12-31"): [200.0],
+        },
+        index=["Operating Cash Flow"],
+    )
+    out = YahooProvider._normalize_fin_history(ist, bs, cf)
+    assert out.loc[pd.Timestamp("2023-12-31"), COL_OCF] == pytest.approx(300.0)
+    assert out.loc[pd.Timestamp("2021-12-31"), COL_OCF] == pytest.approx(200.0)
+    # cf 缺失时 OCF 列为空但不抛错(required_fundamentals 兜底),其余列不受影响
+    out_no_cf = YahooProvider._normalize_fin_history(ist, bs)
+    assert out_no_cf[COL_OCF].isna().all()
+    assert not out_no_cf[COL_REVENUE].isna().all()
+    assert not out_no_cf[COL_NET_PROFIT].isna().all()
 
 
 def test_normalize_fin_history_empty_income() -> None:

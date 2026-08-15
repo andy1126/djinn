@@ -27,6 +27,93 @@ def test_load_minimal_config():
     assert cfg.strategy.name == "MACrossover"
 
 
+def test_load_selection_timing_config():
+    """G8:selection/timing 配置解析(选股流水线增强 + 两层择时)。"""
+    data = {
+        "universe": {"symbols": ["AAPL"], "market": "US"},
+        "period": {"start": "2024-01-01", "end": "2024-12-31"},
+        "strategy": {
+            "name": "FactorPortfolio",
+            "factor_weights": {"momentum": 1.0},
+            "n_stocks": 20,
+            "rebalance_freq": 20,
+            "selection": {
+                "min_amount": 50000000,
+                "min_list_days": 120,
+                "exclude_st": True,
+                "industry_neutral": True,
+                "max_sector_weight": 0.3,
+                "min_score_diff": 0.5,
+            },
+            "timing": {
+                "market_filter": {"type": "sma", "window": 200, "floor": 0.3},
+                "exit_rule": {"type": "sma_break", "window": 20},
+                "entry_confirm": {"type": "above_sma", "window": 20},
+                "cooldown_days": 5,
+            },
+        },
+    }
+    cfg = load_config(data=data)
+    sel = cfg.strategy.selection
+    assert sel is not None
+    assert sel.min_amount == 50000000.0
+    assert sel.exclude_st is True
+    assert sel.industry_neutral is True
+    assert sel.max_sector_weight == 0.3
+    assert sel.min_score_diff == 0.5
+    timing = cfg.strategy.timing
+    assert timing is not None
+    assert timing.market_filter == {"type": "sma", "window": 200, "floor": 0.3}
+    assert timing.exit_rule == {"type": "sma_break", "window": 20}
+    assert timing.cooldown_days == 5
+    # 缺省 selection → None(行为等价于缺省)
+    cfg2 = load_config(data=_minimal_cfg())
+    assert cfg2.strategy.selection is None
+    assert cfg2.strategy.timing is None
+
+
+def test_load_factor_portfolio_example_yaml():
+    """G8:factor_portfolio.example.yaml 可解析(含 selection/timing 注释块)。"""
+    cfg = load_config(path="configs/factor_portfolio.example.yaml")
+    assert cfg.strategy.name == "FactorPortfolio"
+    assert cfg.strategy.selection is not None
+    assert cfg.strategy.timing is not None
+    assert cfg.strategy.selection.min_amount == 50000000.0
+    assert cfg.resolved_market() is Market.CN
+
+
+def test_build_timing_unknown_type_raises():
+    """G8:未知 timing.type → ConfigError(列出允许值)。"""
+    from djinn.cli.runner import _build_timing
+    from djinn.config.models import TimingConfig
+
+    with pytest.raises(ConfigError, match="market_filter"):
+        _build_timing(TimingConfig(market_filter={"type": "bogus"}))
+    with pytest.raises(ConfigError, match="exit_rule"):
+        _build_timing(TimingConfig(exit_rule={"type": "bogus"}))
+
+
+def test_loader_max_volume_share():
+    """A11:YAML max_volume_share 经 load_config 生效并流入 TradeConstraints。"""
+    data = {
+        **_minimal_cfg(),
+        "costs": {"max_volume_share": 0.1},
+    }
+    cfg = load_config(data=data)
+    assert cfg.costs.max_volume_share == 0.1
+    # 边界校验:0~1 之外拒绝
+    with pytest.raises(ConfigError):
+        load_config(data={**_minimal_cfg(), "costs": {"max_volume_share": 1.5}})
+    # 流入引擎 TradeConstraints
+    from djinn.cli.runner import build_engine_config
+
+    ec = build_engine_config(cfg)
+    assert ec.constraints is not None
+    assert ec.constraints.max_volume_share == 0.1
+    # 默认 0 = 不限制
+    assert load_config(data=_minimal_cfg()).costs.max_volume_share == 0.0
+
+
 def test_config_validation_bad_period():
     data = _minimal_cfg()
     data["period"] = {"start": "2024-12-01", "end": "2024-01-01"}  # start > end

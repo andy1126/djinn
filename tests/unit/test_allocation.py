@@ -145,6 +145,27 @@ def test_optimizer_degrades_on_nan_cov() -> None:
     assert RiskParityWeight().target_weights(_SYMBOLS, cov=bad) == expected
 
 
+def test_allocation_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    """A8:缺参退化为等权时显式告警,同一实例只警一次。"""
+    expected = dict.fromkeys(_SYMBOLS, 1.0 / 3.0)
+    alloc = MinVarianceWeight()
+    assert alloc.target_weights(_SYMBOLS) == expected
+    assert alloc.target_weights(_SYMBOLS) == expected
+    warns = [
+        r
+        for r in caplog.records
+        if r.name.startswith("djinn.portfolio.allocation")
+        and "退化为等权" in r.getMessage()
+    ]
+    assert len(warns) == 1
+    assert "MinVarianceWeight" in warns[0].getMessage()
+    assert "cov" in warns[0].getMessage()
+    # ScoreWeight 同样告警
+    with caplog.at_level("WARNING", logger="djinn.portfolio.allocation"):
+        ScoreWeight().target_weights(_SYMBOLS)
+    assert any("ScoreWeight" in r.getMessage() for r in caplog.records)
+
+
 # ── 基础分配器(新签名向后兼容)─────────────────────────────
 def test_basic_allocators_still_work() -> None:
     assert EqualWeight().target_weights(_SYMBOLS) == dict.fromkeys(_SYMBOLS, 1.0 / 3.0)

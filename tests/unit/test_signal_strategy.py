@@ -57,3 +57,47 @@ def test_unknown_indicator_raises() -> None:
 
 def test_signal_strategy_registered() -> None:
     assert get_strategy_class("SignalStrategy").__name__ == "SignalStrategy"
+
+
+# ── D1:signals 因果性自检 ───────────────────────────────
+
+
+def test_check_causal_clean() -> None:
+    """D1:滚动类因果信号 → check_causal 无告警。"""
+    from djinn.strategy.check import check_causal
+
+    idx = pd.date_range("2024-01-01", periods=120)
+    close = pd.Series(np.linspace(100.0, 200.0, 120), index=idx)
+    df = pd.DataFrame({"close": close})
+
+    def causal_signals(d: pd.DataFrame) -> pd.Series:
+        ma = d["close"].rolling(20).mean()
+        return (d["close"] > ma).astype(int)
+
+    assert check_causal(causal_signals, df) == []
+
+
+def test_check_causal_detects_shift_neg() -> None:
+    """D1:含 shift(-1)(依赖未来)的 signals 被 check_causal 检出。"""
+    from djinn.strategy.check import check_causal
+
+    idx = pd.date_range("2024-01-01", periods=120)
+    close = pd.Series(np.linspace(100.0, 200.0, 120), index=idx)
+    df = pd.DataFrame({"close": close})
+
+    def non_causal_signals(d: pd.DataFrame) -> pd.Series:
+        # 明天的收盘决定今天的信号 → 未来函数
+        return (d["close"].shift(-1) > d["close"]).astype(int)
+
+    problems = check_causal(non_causal_signals, df)
+    assert problems, "shift(-1) 应被检出为非因果"
+
+
+def test_asof_no_lookahead() -> None:
+    """D1:Series.asof(t) 只取 ≤t 的最近值,看不到未来信号。"""
+    idx = pd.date_range("2024-01-01", periods=5)
+    sig = pd.Series([0, 0, 0, 1, 1], index=idx)  # 01-04 突变
+    assert sig.asof(pd.Timestamp("2024-01-01")) == 0  # 突变前
+    assert sig.asof(pd.Timestamp("2024-01-03")) == 0  # 突变前一日(看不到 01-04)
+    assert sig.asof(pd.Timestamp("2024-01-04")) == 1  # 突变当日
+    assert pd.isna(sig.asof(pd.Timestamp("2023-12-31")))  # 早于首日无值

@@ -91,6 +91,24 @@ def test_analyze_factor_report_serializable() -> None:
     assert len(d["ic_by_group"]["index"]) == 2  # 两个行业
 
 
+def test_analyze_factor_report_caveats_roundtrip() -> None:
+    """C3:data_caveats 随 FactorReport.to_dict() 透出(无 caveats 时为空列表)。"""
+    prices = _prices()
+    fwd = compute_forward_returns(prices, [1, 5, 10])
+    factor = fwd[1].copy()
+    with_caveats = analyze_factor(
+        factor,
+        fwd,
+        name="test",
+        caveats=["字段 pe/pb 为快照口径(非 point-in-time,IC 可能高估)"],
+    )
+    assert with_caveats.to_dict()["data_caveats"] == [
+        "字段 pe/pb 为快照口径(非 point-in-time,IC 可能高估)"
+    ]
+    without = analyze_factor(factor, fwd, name="test")
+    assert without.to_dict()["data_caveats"] == []
+
+
 def test_recommend_rebalance_rule() -> None:
     """C11:IC 半衰期映射到调仓档(峰值 1 期 0.08,10 期跌破 50% → monthly)。"""
     assert _recommend_freq({1: 0.08, 5: 0.07, 10: 0.03, 21: 0.01}) == "monthly"

@@ -65,6 +65,15 @@ wheels = [
 ]
 
 [[package]]
+name = "antlr4-python3-runtime"
+version = "4.13.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/5f/2cdf6f7aca3b20d3f316e9f505292e1f256a32089bd702034c29ebde6242/antlr4_python3_runtime-4.13.2.tar.gz", hash = "sha256:909b647e1d2fc2b70180ac586df3933e38919c85f98ccc656a96cd3f25ef3916", size = 117467, upload-time = "2024-08-03T19:00:12.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/03/a851e84fcbb85214dc637b6378121ef9a0dd61b4c65264675d8a5c9b1ae7/antlr4_python3_runtime-4.13.2-py3-none-any.whl", hash = "sha256:fe3835eb8d33daece0e799090eda89719dbccee7aa39ef94eed3818cafa5a7e8", size = 144462, upload-time = "2024-08-03T19:00:11.134Z" },
+]
+
+[[package]]
 name = "anyio"
 version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
@@ -466,16 +475,14 @@ dependencies = [
     { name = "exchange-calendars" },
     { name = "jinja2" },
     { name = "joblib" },
-    { name = "matplotlib" },
     { name = "numpy" },
     { name = "openpyxl" },
     { name = "pandas" },
-    { name = "plotly" },
     { name = "pyarrow" },
     { name = "pydantic" },
+    { name = "pynescript" },
     { name = "pyyaml" },
     { name = "scipy" },
-    { name = "seaborn" },
     { name = "typer" },
     { name = "yfinance" },
 ]
@@ -489,8 +496,10 @@ dev = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypothesis" },
+    { name = "matplotlib" },
     { name = "mypy" },
     { name = "pandas-stubs" },
+    { name = "plotly" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
@@ -498,11 +507,17 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-multipart" },
     { name = "ruff" },
+    { name = "seaborn" },
     { name = "types-pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 tushare = [
     { name = "tushare" },
+]
+viz = [
+    { name = "matplotlib" },
+    { name = "plotly" },
+    { name = "seaborn" },
 ]
 web = [
     { name = "fastapi" },
@@ -522,16 +537,19 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "joblib", specifier = ">=1.4" },
-    { name = "matplotlib", specifier = ">=3.8" },
+    { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.8" },
+    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.8" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=2.2" },
-    { name = "plotly", specifier = ">=5.20" },
+    { name = "plotly", marker = "extra == 'dev'", specifier = ">=5.20" },
+    { name = "plotly", marker = "extra == 'viz'", specifier = ">=5.20" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
     { name = "pyarrow", specifier = ">=15.0" },
     { name = "pydantic", specifier = ">=2.6" },
+    { name = "pynescript", specifier = ">=0.3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
@@ -541,7 +559,8 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.13" },
     { name = "scipy", specifier = ">=1.11" },
-    { name = "seaborn", specifier = ">=0.13" },
+    { name = "seaborn", marker = "extra == 'dev'", specifier = ">=0.13" },
+    { name = "seaborn", marker = "extra == 'viz'", specifier = ">=0.13" },
     { name = "tushare", marker = "extra == 'tushare'", specifier = ">=1.4" },
     { name = "typer", specifier = ">=0.12" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
@@ -549,7 +568,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.27" },
     { name = "yfinance", specifier = ">=0.2.40" },
 ]
-provides-extras = ["akshare", "tushare", "web", "dev"]
+provides-extras = ["akshare", "tushare", "viz", "web", "dev"]
 
 [[package]]
 name = "et-xmlfile"
@@ -1600,6 +1619,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/11/11/42568c1568a75f8803c59f26d29af01a0890352b7a8e03d41ecda8bfb5dd/pyluach-2.3.0.tar.gz", hash = "sha256:ec6e30669d1df50c9ca160486da44a8195bb4c7a5d3d533990d0c5b03accd281", size = 26910, upload-time = "2025-09-09T20:24:39.651Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/c8/f96208ade3ca4c23b372497d0788bcf0f2e0ff4310e5ee693366bc33fdf0/pyluach-2.3.0-py3-none-any.whl", hash = "sha256:4497b731aef59508b079dbf5f00bc5bf4329ac45090a6cd37b5a83756f0e69ab", size = 25914, upload-time = "2025-09-09T20:24:37.831Z" },
+]
+
+[[package]]
+name = "pynescript"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "antlr4-python3-runtime" },
+    { name = "click" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/a3/d5cd57c733f97c34ad6cb394edc9c674e4b506afeb27c6b5973767b9b5ca/pynescript-0.3.0.tar.gz", hash = "sha256:f4a32821a6b04e3236f6998627667f72ebfaa22e87c2c544e3481de61806ac96", size = 246076, upload-time = "2025-12-07T19:34:18.587Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/19/0e412839e6c3f42c80d53bb21f28651149ab1a8468b7a29e665df68b8b74/pynescript-0.3.0-py3-none-any.whl", hash = "sha256:0a24fac07afad68bb9e3150fa3686f7c9b6d9316c971e91f4799abd4b921c6a1", size = 118756, upload-time = "2025-12-07T19:34:17.277Z" },
 ]
 
 [[package]]

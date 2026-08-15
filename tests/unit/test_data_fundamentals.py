@@ -15,6 +15,7 @@ from djinn.data.providers.fundamentals_router import FundamentalsRouter
 from djinn.data.schema import (
     COL_ANNOUNCE_DATE,
     COL_DIVIDEND,
+    COL_FLOAT_CAP,
     COL_MARKET_CAP,
     COL_PB,
     COL_PE,
@@ -218,6 +219,74 @@ def test_daily_valuation_point_in_time() -> None:
     assert pe.iloc[half - 1] == 10.0
     assert pe.iloc[half] == 20.0
     assert pe.iloc[-1] == 20.0
+
+
+def test_market_cap_approx_tracks_close() -> None:
+    """C2:市值无历史时序时合成 ``close × 股本``(价格逐日变动,消除快照常数前视)。"""
+    from djinn.factor.engine import FactorEngine
+
+    class _SnapshotSource:
+        """get_snapshot 返回 market_cap/float_cap/close,其余时序为空。"""
+
+        name = "stub"
+
+        def get_snapshot(self, symbols, when, market=None) -> pd.DataFrame:
+            return pd.DataFrame(
+                {
+                    COL_MARKET_CAP: [2.0e11] * len(symbols),
+                    COL_FLOAT_CAP: [1.2e11] * len(symbols),
+                    "close": [100.0] * len(symbols),
+                },
+                index=symbols,
+            )
+
+        def get_history(self, symbol, start, end, market=None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def get_daily_valuation(self, symbol, start, end, market=None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def get_daily_dividends(self, symbol, start, end, market=None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+    start, end = date(2024, 1, 2), date(2024, 1, 10)
+    trading_index = pd.DatetimeIndex(pd.bdate_range(start, end))
+    closes = pd.Series(
+        [100.0 + i for i in range(len(trading_index))], index=trading_index
+    )
+    close_panel = pd.DataFrame({"S": closes})
+    eng = FactorEngine()
+    mc = eng._asof_field_panel(
+        COL_MARKET_CAP,
+        ["S"],
+        trading_index,
+        end,
+        _SnapshotSource(),
+        Market.CN,
+        {},
+        {},
+        {},
+        close_panel=close_panel,
+    )
+    # shares = 2e11 / 100 = 2e9 → market_cap_t = close_t × 2e9,逐日变化
+    assert mc["S"].iloc[0] == pytest.approx(100.0 * 2.0e9)
+    assert mc["S"].iloc[-1] == pytest.approx((100.0 + len(trading_index) - 1) * 2.0e9)
+    assert "market_cap" in eng._approx_fields
+    # float_cap 同理(1.2e11 / 100 = 1.2e9 股)
+    fc = eng._asof_field_panel(
+        COL_FLOAT_CAP,
+        ["S"],
+        trading_index,
+        end,
+        _SnapshotSource(),
+        Market.CN,
+        {},
+        {},
+        {},
+        close_panel=close_panel,
+    )
+    assert fc["S"].iloc[-1] == pytest.approx((100.0 + len(trading_index) - 1) * 1.2e9)
+    assert "float_cap" in eng._approx_fields
 
 
 def test_fundamental_panels_fetch_once_per_symbol() -> None:

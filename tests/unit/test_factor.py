@@ -167,6 +167,68 @@ def test_lookback_truncation_equal() -> None:
     assert full.iloc[-1]["A"] == pytest.approx(trunc.iloc[-1]["A"], rel=1e-12)
 
 
+def test_max_lookback_values() -> None:
+    """D3:各因子 max_lookback 按实际参数覆写(滚动类=窗口+余量,基本面=1)。"""
+    from djinn.factor import make_factor
+
+    assert make_factor("momentum", period=20, skip=5).max_lookback == 30  # p+skip+5
+    assert make_factor("momentum", period=20, skip=0).max_lookback == 25
+    assert make_factor("reversal", period=5).max_lookback == 10
+    assert make_factor("volatility", period=20).max_lookback == 25
+    assert make_factor("idio_vol", period=60).max_lookback == 125  # 2×period+5
+    assert make_factor("turnover_chg", long=120).max_lookback == 125
+    assert make_factor("high_52w", window=252).max_lookback == 257
+    # 基本面直读类 → 1
+    assert make_factor("ep").max_lookback == 1
+    assert make_factor("roe").max_lookback == 1
+    assert make_factor("size").max_lookback == 1
+    assert make_factor("div_yield").max_lookback == 252  # 365D 滚动 ≈ 252 交易日
+
+
+def test_lookback_truncation_every_price_factor() -> None:
+    """D3:每个内置价格类因子,截断面板末行与全历史面板末行逐值相等。"""
+    from djinn.factor import make_factor
+
+    n = 300
+    # 含上下波动的价格(纯单调上涨会让 downside_volatility 全 NaN,无法比较)
+    closes = [float(10 + (i % 11) + (i // 11) * 0.3) for i in range(n)]
+    prices = _prices({"A": closes})
+    for name, params in [
+        ("momentum", {"period": 20}),
+        ("reversal", {"period": 5}),
+        ("high_52w", {"window": 100}),
+        ("volatility", {"period": 20}),
+        ("downside_volatility", {"period": 20}),
+        ("max_lottery", {"period": 20}),
+    ]:
+        f = make_factor(name, **params)
+        full = f.compute(prices, {}, {})
+        cutoff = prices.index[-1] - pd.Timedelta(days=int(f.max_lookback * 1.6) + 30)
+        trunc = f.compute(prices.loc[prices.index >= cutoff], {}, {})
+        fv = full.iloc[-1]["A"]
+        tv = trunc.iloc[-1]["A"]
+        if pd.isna(fv) and pd.isna(tv):
+            continue  # 两值同为 NaN(窗口无有效样本)→ 视为一致
+        assert fv == pytest.approx(tv, rel=1e-9), f"{name} 截断末行不一致"
+
+
+def test_factor_output_float64_dtype() -> None:
+    """D10:因子输出保持 float64(无 replace(0, pd.NA) 的 object 退化)。"""
+    from djinn.data.schema import COL_AMOUNT, COL_FLOAT_CAP
+
+    n = 60
+    prices = _prices({"A": [float(10 + i) for i in range(n)]})
+    amount = pd.DataFrame({"A": [1.0e8] * n}, index=prices.index)
+    float_cap = pd.DataFrame({"A": [1.0e10] * n}, index=prices.index)
+    for name, ohlcv, fundamentals in [
+        ("turnover", {COL_AMOUNT: amount}, {COL_FLOAT_CAP: float_cap}),
+        ("amihud", {COL_AMOUNT: amount}, {}),
+    ]:
+        f = make_factor(name)
+        out = f.compute(prices, ohlcv, fundamentals)
+        assert str(out.dtypes.iloc[0]) == "float64", f"{name} 输出应为 float64"
+
+
 def test_value_factor_reciprocal() -> None:
     from djinn.data.schema import COL_PE
 

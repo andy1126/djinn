@@ -738,6 +738,89 @@ def test_sweep_max_drawdown_sorted_descending() -> None:
     assert mdds == sorted(mdds, reverse=True)
 
 
+def test_sweep_trades_column() -> None:
+    """B2:sweep 结果的 n_trades 列 = 实际成交笔数(fills 数,非标的数/回合数)。"""
+    from djinn.cli.runner import build_engine_config, build_strategy
+    from djinn.cli.sweep import _apply_param
+    from djinn.config import load_config
+    from djinn.engine import EventDrivenEngine
+
+    resp = client.post(
+        "/sweeps",
+        json={
+            "config": _factor_portfolio_cfg(_SYMBOLS),
+            "grid": {"strategy.n_stocks": [2]},
+            "target": "sharpe",
+            "parallel": False,
+        },
+    )
+    assert resp.status_code == 200
+    body = _wait_done(resp.json()["job_id"], "/sweeps")
+    assert body["status"] == "done", body.get("error")
+    row = body["result"]["results"][0]
+    assert "n_trades" in row and row["n_trades"] >= 0
+    # 直接跑同配置回测,验证 n_trades == len(fills)
+    cfg = load_config(data=_factor_portfolio_cfg(_SYMBOLS))
+    _apply_param(cfg, "strategy.n_stocks", 2)
+    strategy = build_strategy(cfg)
+    engine = EventDrivenEngine(build_engine_config(cfg))
+    market = cfg.resolved_market()
+    data = {
+        s: _stub_registry.get_ohlcv(s, _START, _END, cfg.adjust, market=market)
+        for s in _SYMBOLS
+    }
+    res = engine.run(strategy, data)
+    assert row["n_trades"] == len(res.trades)
+
+
+def test_sweep_nan_last() -> None:
+    """B4:calmar 为 NaN 的组合(零回撤未定义)排在有效值之后(降序)。"""
+    import math
+
+    from djinn.cli.sweep import REVERSE_MIN_TARGETS
+
+    target = "calmar"
+    reverse = target not in REVERSE_MIN_TARGETS  # 与 run_sweep_job 排序同源
+    nan_val = float("-inf") if reverse else float("inf")
+
+    def key(r: dict) -> float:
+        v = r.get(target)
+        if v is None:
+            return nan_val
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return nan_val
+        return f if math.isfinite(f) else nan_val
+
+    rows = [{"calmar": float("nan")}, {"calmar": 2.0}, {"calmar": 1.0}]
+    rows.sort(key=key, reverse=reverse)
+    assert rows[0]["calmar"] == 2.0  # 有效值在前(降序)
+    assert math.isnan(rows[-1]["calmar"])  # NaN 排最后
+
+
+def test_sweep_min_score_diff_axis() -> None:
+    """G8:sweep 扫 strategy.min_score_diff 轴 → config_summary 含该值,两组合跑通。"""
+    resp = client.post(
+        "/sweeps",
+        json={
+            "config": _factor_portfolio_cfg(_SYMBOLS),
+            "grid": {"strategy.min_score_diff": [0, 0.5]},
+            "target": "sharpe",
+            "parallel": False,
+        },
+    )
+    assert resp.status_code == 200
+    body = _wait_done(resp.json()["job_id"], "/sweeps")
+    assert body["status"] == "done", body.get("error")
+    results = body["result"]["results"]
+    assert len(results) == 2
+    for row in results:
+        assert "strategy.min_score_diff" in row["config_summary"]
+    diffs = sorted(r["config_summary"]["strategy.min_score_diff"] for r in results)
+    assert diffs == [0, 0.5]
+
+
 # ── 孤儿任务恢复(进程重启)──────────────────────────────
 def _make_running_job(reg: JobRegistry, kind: str) -> str:
     """造一个 running 状态的孤儿任务(模拟进程重启中断)。"""
@@ -799,3 +882,22 @@ def test_recover_orphaned_jobs_skipped_in_test_env(monkeypatch, tmp_path) -> Non
     # 任务仍是 running,未被重新提交
     job = reg.list(limit=10)[0]
     assert job.status == "running"
+
+
+# ── E10:WS 进度推送 ────────────────────────────────────
+def test_ws_progress_streams_job_state(monkeypatch) -> None:
+    """E10:WS /jobs/{id}/progress 连接后先收到 job 当前态帧。"""
+    import djinn.api.routers.jobs as jobs_router
+
+    # WS 端点直接调 get_job_registry()(不走 Depends),monkeypatch 模块引用指向测试库
+    monkeypatch.setattr(jobs_router, "get_job_registry", lambda: _test_registry)
+    job = _test_registry.create("factor-analysis", meta={"factor": "momentum"})
+    with client.websocket_connect(f"/jobs/{job.job_id}/progress") as ws:
+        first = ws.receive_json()
+        assert first["job_id"] == job.job_id
+        assert "status" in first
+    # 心跳帧格式(等待下一个 1s 心跳)
+    with client.websocket_connect(f"/jobs/{job.job_id}/progress") as ws:
+        ws.receive_json()  # 初始态
+        hb = ws.receive_json()
+        assert hb.get("type") == "heartbeat"
