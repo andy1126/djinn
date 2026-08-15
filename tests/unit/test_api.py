@@ -12,13 +12,16 @@ from fastapi.testclient import TestClient
 # 使用临时 DB 避免污染真实 job 库
 os.environ.setdefault("DJINN_TEST", "1")
 
-from djinn.api.deps import get_job_registry
+from djinn.api.deps import get_cache, get_job_registry
 from djinn.api.jobs import JobRegistry
 from djinn.api.main import app
+from djinn.data import DataCache
 
-# 注入临时 registry(独立 DB)
+# 注入临时 registry(独立 DB)与隔离缓存(避免 test_clear_cache 清掉真实 .cache/djinn/)
 _test_registry = JobRegistry(db_path=".cache/test_jobs.db")
 app.dependency_overrides[get_job_registry] = lambda: _test_registry
+_test_cache = DataCache(cache_dir=".cache/test_api_cache")
+app.dependency_overrides[get_cache] = lambda: _test_cache
 
 client = TestClient(app)
 

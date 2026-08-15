@@ -46,7 +46,8 @@ def test_run_backtest_full_pipeline(make_csv, tmp_csv_dir: Path, tmp_path: Path)
         "output": {"dir": str(tmp_path / "out"), "export": ["csv", "excel"]},
     }
     cfg = load_config(data=data)
-    cache = DataCache()
+    # 用 tmp 缓存目录,避免测试数据污染真实 .cache/djinn/(曾因此清掉用户行情缓存)
+    cache = DataCache(cache_dir=str(tmp_path / "cache"))
     registry = default_registry(csv_dir=str(tmp_csv_dir), cache=cache)
     result = run_backtest(cfg, registry=registry, cache=cache)
     assert result.report.metrics.n_days > 0
