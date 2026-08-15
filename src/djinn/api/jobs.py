@@ -377,7 +377,19 @@ def run_sweep_job(
         from djinn.cli.sweep import REVERSE_MIN_TARGETS
 
         reverse_sort = target not in REVERSE_MIN_TARGETS
-        results.sort(key=lambda r: r.get(target, 0.0) or 0.0, reverse=reverse_sort)
+        nan_val = float("-inf") if reverse_sort else float("inf")
+
+        def _key(r: dict[str, Any]) -> float:
+            v = r.get(target)
+            if v is None:
+                return nan_val
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return nan_val
+            return f if math.isfinite(f) else nan_val
+
+        results.sort(key=_key, reverse=reverse_sort)
         registry.update(
             job_id,
             status="done",

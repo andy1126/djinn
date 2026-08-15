@@ -108,6 +108,9 @@ class FactorPanel:
 class FactorEngine:
     """因子计算引擎。"""
 
+    def __init__(self) -> None:
+        self._warned_fields: set[str] = set()  # C3:退化告警按字段去重
+
     def compute(
         self,
         factors: list[Factor],
@@ -246,6 +249,13 @@ class FactorEngine:
                     _log.debug("%s 字段 %s 时序不可用: %s", sym, field, e)
             if series is None:
                 # 退化:用 when=end 的快照常数填充(估值类近似,非严格 PIT)
+                if field not in self._warned_fields:
+                    _log.warning(
+                        "字段 %s 无历史/日频估值,使用 %s 快照常数填充全历史(非 PIT)",
+                        field,
+                        end,
+                    )
+                    self._warned_fields.add(field)
                 try:
                     snap = source.get_snapshot([sym], end, market)
                     val = float(pd.to_numeric(snap[field], errors="coerce").iloc[0])

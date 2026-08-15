@@ -168,6 +168,13 @@ class EventDrivenEngine:
 
         allocation = cfg.allocation or make_allocation("equal")
         rebalancer = cfg.rebalance
+        # A8:进阶分配器(score/cov)在引擎再平衡路径无法提供所需输入 → 启动拒绝
+        if rebalancer is not None and allocation.requires:
+            raise ValueError(
+                f"allocation={type(allocation).__name__} 需要 {set(allocation.requires)},"
+                "引擎再平衡路径无法提供;请改用 FactorPortfolioStrategy(scope=portfolio)"
+                "或 allocation=equal/market_cap/custom"
+            )
         risk = cfg.risk or RiskManager(RiskLimits())
 
         for i, ts in enumerate(trading_index):

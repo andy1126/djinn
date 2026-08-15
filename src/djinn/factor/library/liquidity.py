@@ -28,7 +28,7 @@ class TurnoverFactor(Factor):
             )
         mean_amount = amount.rolling(int(self.period)).mean()
         cap = float_cap.reindex(index=prices.index, columns=prices.columns)
-        return mean_amount / cap.replace(0.0, pd.NA)
+        return mean_amount / cap.where(cap != 0)
 
 
 class AmihudFactor(Factor):
@@ -72,7 +72,7 @@ class TurnoverChangeFactor(Factor):
                 float("nan"), index=prices.index, columns=prices.columns
             )
         cap = float_cap.reindex(index=prices.index, columns=prices.columns)
-        daily_to = amount / cap.replace(0.0, pd.NA)  # 日换手率
+        daily_to = amount / cap.where(cap != 0)  # 日换手率
         short_to = daily_to.rolling(int(self.short)).mean()
         long_to = daily_to.rolling(int(self.long)).mean()
-        return short_to / long_to.replace(0.0, pd.NA) - 1.0
+        return short_to / long_to.where(long_to != 0) - 1.0

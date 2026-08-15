@@ -17,6 +17,8 @@ from djinn.engine.event_engine import EngineConfig, EventDrivenEngine
 from djinn.engine.events import Fill, Order, Rejection
 from djinn.engine.slippage import ZeroSlippage
 from djinn.portfolio.account import Account
+from djinn.portfolio.allocation import MinVarianceWeight
+from djinn.portfolio.rebalance import RebalanceConfig, Rebalancer
 from djinn.strategy.base import Strategy
 
 
@@ -230,3 +232,21 @@ def test_target_percent_uses_open_price() -> None:
     assert len(buys) == 2
     # 第二笔:equity_open = 100000,cur_mv = 100*110,delta = 39000 → qty = 39000/110
     assert buys[1].qty == pytest.approx(39000.0 / 110.0, rel=1e-6)
+
+
+def test_engine_rejects_cov_allocation():
+    """A8:引擎再平衡路径 + 需 cov 的分配器 → 启动抛 ValueError。"""
+
+    class _Hold(Strategy):
+        def on_bar(self, ctx) -> None:  # type: ignore[override]
+            return
+
+    cfg = EngineConfig(
+        initial_cash=100000.0,
+        commission=USCommissionModel(rate=0.0, min_commission=0.0),
+        slippage=ZeroSlippage(),
+        allocation=MinVarianceWeight(),
+        rebalance=Rebalancer(RebalanceConfig(period="daily")),
+    )
+    with pytest.raises(ValueError, match="FactorPortfolioStrategy"):
+        EventDrivenEngine(cfg).run(_Hold(), {"A": _md("A", [50.0] * 3)})

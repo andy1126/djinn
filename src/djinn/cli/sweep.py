@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -206,11 +207,21 @@ def sweep_command(
         results = [_run_one(cfg, registry, c, target) for c in combos]
 
     # 排序:REVERSE_MIN_TARGETS 越小越好 → 升序;默认降序。
+    # B4:NaN/缺失目标排最后(升序时用 +inf,降序时用 -inf)。
     reverse = target not in REVERSE_MIN_TARGETS
-    results.sort(
-        key=lambda r: (r.get(target) if r.get(target) is not None else 0.0),
-        reverse=reverse,
-    )
+    nan_val = float("-inf") if reverse else float("inf")
+
+    def _key(r: dict[str, Any]) -> float:
+        v = r.get(target)
+        if v is None:
+            return nan_val
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return nan_val
+        return f if math.isfinite(f) else nan_val
+
+    results.sort(key=_key, reverse=reverse)
     direction = "升序" if not reverse else "降序"
     typer.echo(f"\n=== Top {min(top, len(results))} 组合(按 {target} {direction})===")
     for i, r in enumerate(results[:top]):

@@ -65,6 +65,12 @@ def score_cross_section(
     total = pd.Series(0.0, index=cross.index, dtype=float)
     for fs in scores:
         if fs.factor not in cross.columns:
+            # C14:缺失因子显式告警(否则静默重归一化,权重分配与用户预期不符)
+            _log.warning(
+                "打分因子 %s 不在因子面板中(可用: %s),已跳过",
+                fs.factor,
+                list(cross.columns),
+            )
             continue
         # 转置成 1×N 单行面板,复用 preprocess 的行向(截面)实现
         row = cross[[fs.factor]].T.astype(float)
@@ -131,15 +137,11 @@ def top_n(score_df: Panel, when: object, n: int) -> list[str]:
     if score_df.empty or n <= 0:
         return []
     ts = pd.Timestamp(when)  # type: ignore[arg-type]
-    if ts in score_df.index:
-        row = score_df.loc[ts]
-    else:
-        prior = score_df.index[score_df.index <= ts]
-        if len(prior) == 0:
-            return []
-        row = score_df.loc[prior[-1]]
-    if isinstance(row, pd.DataFrame):  # 重复日期标签 → 取首行
-        row = row.iloc[0]
+    # D9:searchsorted 二分定位(替代线性扫 O(T)→O(log T))
+    pos = score_df.index.searchsorted(ts, side="right")
+    if pos == 0:
+        return []
+    row = score_df.iloc[pos - 1]  # iloc 单行定位恒返回 Series
     row = row.dropna()
     if len(row) == 0:
         return []

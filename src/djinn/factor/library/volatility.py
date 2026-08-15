@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 
 from djinn.factor.base import Factor, Panel, PanelDict, param
 
@@ -37,7 +36,7 @@ class BetaFactor(Factor):
         market = ret.mean(axis=1)  # 等权市场代理
         cov = ret.rolling(p).cov(market)
         var = market.rolling(p).var()
-        return cov.div(var.replace(0.0, pd.NA), axis=0)
+        return cov.div(var.where(var != 0), axis=0)
 
 
 class DownsideVolatilityFactor(Factor):
@@ -90,6 +89,6 @@ class IdioVolFactor(Factor):
         market = ret.mean(axis=1)  # 等权市场代理
         cov = ret.rolling(p).cov(market)
         var = market.rolling(p).var()
-        beta = cov.div(var.replace(0.0, pd.NA), axis=0)
+        beta = cov.div(var.where(var != 0), axis=0)
         resid = ret.sub(beta.mul(market, axis=0), axis=0)
         return resid.rolling(p).std()

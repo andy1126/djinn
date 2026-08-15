@@ -46,6 +46,9 @@ def _equal_weights(symbols: list[str]) -> dict[str, float]:
 class Allocation(ABC):
     """分配策略基类:给定标的列表与上下文,产出目标权重 {symbol: weight}。"""
 
+    # A8:分配器所需的输入依赖(引擎再平衡路径无法提供时启动校验拒绝)
+    requires: frozenset[str] = frozenset()
+
     @abstractmethod
     def target_weights(
         self,
@@ -125,6 +128,8 @@ class ScoreWeight(Allocation):
     无打分时退化为等权。
     """
 
+    requires = frozenset({"scores"})
+
     def target_weights(
         self,
         symbols: list[str],
@@ -151,6 +156,8 @@ class RiskParityWeight(Allocation):
     需要协方差 ``cov``;缺失或不可用时退化为等权。
     """
 
+    requires = frozenset({"cov"})
+
     def __init__(self, max_iter: int = 1000, tol: float = 1e-10) -> None:
         self.max_iter = int(max_iter)
         self.tol = float(tol)
@@ -172,6 +179,8 @@ class RiskParityWeight(Allocation):
 
 class MinVarianceWeight(Allocation):
     """最小方差:min w'Σw,s.t. Σw=1、w≥0(SLSQP)。无 cov 退化等权。"""
+
+    requires = frozenset({"cov"})
 
     def target_weights(
         self,
@@ -195,6 +204,8 @@ class MeanVarianceWeight(Allocation):
     ``risk_aversion``(γ)越大越保守、越贴近最小方差;得分量纲与协方差不同,
     实务上 γ 常取较大值(默认 10)。缺 ``cov`` 退化等权,缺 ``scores`` 退化最小方差。
     """
+
+    requires = frozenset({"cov"})
 
     def __init__(self, risk_aversion: float = 10.0) -> None:
         self.risk_aversion = float(risk_aversion)

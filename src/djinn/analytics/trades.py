@@ -92,7 +92,7 @@ def compute_trade_stats(
 class BenchmarkStats:
     """基准对比指标。"""
 
-    alpha: float = 0.0  # 超额收益(年化)
+    alpha: float = 0.0  # Jensen alpha(年化,见 compare_benchmark)
     beta: float = 0.0
     tracking_error: float = 0.0
     information_ratio: float = 0.0
@@ -101,6 +101,7 @@ class BenchmarkStats:
     strategy_return: float = 0.0
     excess_return: float = 0.0
     downside_capture: float = 0.0  # 下行捕获(基准下跌期的策略/基准收益比)
+    upside_capture: float = 0.0  # 上行捕获(基准上涨期的策略/基准收益比)
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -113,6 +114,7 @@ class BenchmarkStats:
             "strategy_return": self.strategy_return,
             "excess_return": self.excess_return,
             "downside_capture": self.downside_capture,
+            "upside_capture": self.upside_capture,
         }
 
 
@@ -157,16 +159,19 @@ def compare_benchmark(
     )
     strat_ret = float(s.iloc[-1] / s.iloc[0] - 1.0)
     bench_ret = float(b.iloc[-1] / b.iloc[0] - 1.0)
-    n_years = len(s) / af
-    alpha = (
-        float(((s.iloc[-1] / s.iloc[0]) / (b.iloc[-1] / b.iloc[0]) - 1) / n_years)
-        if n_years > 0
-        else 0.0
-    )
+    # B6:Jensen alpha —— α = (R_s − rf) − β(R_b − rf),年化
+    rf_daily = rf / af
+    alpha = float((sr.mean() - rf_daily) - beta * (br.mean() - rf_daily)) * af
     down_mask = br < 0
     down_capture = (
         float(sr[down_mask].sum() / br[down_mask].sum())
         if down_mask.any() and br[down_mask].sum() != 0
+        else 0.0
+    )
+    up_mask = br > 0
+    up_capture = (
+        float(sr[up_mask].sum() / br[up_mask].sum())
+        if up_mask.any() and br[up_mask].sum() != 0
         else 0.0
     )
     return BenchmarkStats(
@@ -179,4 +184,5 @@ def compare_benchmark(
         strategy_return=strat_ret,
         excess_return=strat_ret - bench_ret,
         downside_capture=down_capture,
+        upside_capture=up_capture,
     )

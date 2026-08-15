@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -101,3 +103,44 @@ def test_compare_benchmark_uncorrelated():
     )
     bs = compare_benchmark(a, b, market="US")
     assert abs(bs.correlation) < 0.5
+
+
+def test_calmar_nan_when_no_drawdown():
+    """B4:单调上涨零回撤 → Calmar 为 NaN(未定义,而非 0)。"""
+    eq = pd.Series(
+        np.linspace(100, 200, 252), index=pd.bdate_range("2024-01-02", periods=252)
+    )
+    m = compute_metrics(eq, market="US")
+    assert math.isnan(m.calmar)
+
+
+def test_var_nonnegative():
+    """B8:全正收益 → VaR/CVaR 非负(历史法,日度)。"""
+    eq = pd.Series(
+        np.linspace(100, 120, 252), index=pd.bdate_range("2024-01-02", periods=252)
+    )
+    m = compute_metrics(eq, market="US")
+    assert m.var_95 >= 0.0
+    assert m.cvar_95 >= 0.0
+
+
+def test_sortino_no_downside_is_zero():
+    """B3:全正收益 → 下行偏差 0 → sortino 0(无下行风险定义为 0 而非 inf)。"""
+    eq = pd.Series(
+        np.linspace(100, 120, 252), index=pd.bdate_range("2024-01-02", periods=252)
+    )
+    m = compute_metrics(eq, market="US")
+    assert m.sortino == 0.0
+
+
+def test_jensen_alpha_scales_with_beta():
+    """B6:策略收益 = 1.2×基准日收益 + 常数 → beta≈1.2,jensen≈常数×af。"""
+    idx = pd.bdate_range("2024-01-02", periods=500)
+    rng = np.random.default_rng(2)
+    br = pd.Series(rng.normal(0, 0.01, 500), index=idx)
+    sr = 1.2 * br + 0.0005
+    b = pd.Series(100 * np.cumprod(1 + br), index=idx)
+    s = pd.Series(100 * np.cumprod(1 + sr), index=idx)
+    bs = compare_benchmark(s, b, market="US", rf=0.0)
+    assert bs.beta == pytest.approx(1.2, abs=0.02)
+    assert bs.alpha == pytest.approx(0.0005 * 252, abs=0.02)

@@ -291,14 +291,17 @@ class DataCache:
         for p in self.cache_dir.glob("*.parquet"):
             try:
                 df = pd.read_parquet(p)
-                out.append(
-                    {
-                        "file": p.name,
-                        "rows": len(df),
-                        "start": str(pd.to_datetime(df.index).min().date()),
-                        "end": str(pd.to_datetime(df.index).max().date()),
-                    }
-                )
+                entry: dict[str, object] = {"file": p.name, "rows": len(df)}
+                # E9:仅 quote 帧(index=交易日)解析日期;universe/fundamental 帧
+                # index 为 symbol 字符串,强制 to_datetime 会抛异常误报 error。
+                if "::quote::" in p.name:
+                    idx = pd.to_datetime(df.index)
+                    entry["start"] = str(idx.min().date())
+                    entry["end"] = str(idx.max().date())
+                else:
+                    entry["start"] = None
+                    entry["end"] = None
+                out.append(entry)
             except Exception:
                 out.append({"file": p.name, "rows": -1, "error": True})
         return out

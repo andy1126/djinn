@@ -85,13 +85,17 @@ def test_factor_attribution_identity() -> None:
         dtype=float,
     )
     alpha = pd.Series([0.001] * 6, index=days)
-    port = (expo * fret).sum(axis=1) + alpha
+    # B7:归因使用滞后一日暴露,组合收益也用滞后暴露构造以保持恒等式
+    lag_expo = expo.shift(1).fillna(0.0)
+    port = (lag_expo * fret).sum(axis=1) + alpha
     res = factor_attribution(port, expo, fret)
     assert res.total_return == pytest.approx(float(port.sum()))
     assert res.contributions.sum() + res.alpha == pytest.approx(res.total_return)
-    # 已知 α = 6 × 0.001;因子贡献 = 暴露×因子收益 之和
+    # 已知 α = 6 × 0.001;因子贡献 = 滞后暴露 × 因子收益 之和
     assert res.alpha == pytest.approx(0.006, abs=1e-9)
-    assert res.contributions["value"] == pytest.approx(0.02)
+    assert res.contributions["value"] == pytest.approx(
+        float((lag_expo["value"] * fret["value"]).sum())
+    )
     json.dumps(res.to_dict())
 
 
@@ -99,10 +103,24 @@ def test_factor_attribution_zero_alpha_when_exact() -> None:
     days = pd.date_range("2024-01-01", periods=3)
     expo = pd.DataFrame({"f": [1.0, 2.0, 3.0]}, index=days)
     fret = pd.DataFrame({"f": [0.01, 0.02, -0.01]}, index=days)
-    port = (expo * fret).sum(axis=1)  # 无噪声 → α≈0
+    lag_expo = expo.shift(1).fillna(0.0)
+    port = (lag_expo * fret).sum(axis=1)  # 无噪声 → α≈0
     res = factor_attribution(port, expo, fret)
     assert res.alpha == pytest.approx(0.0, abs=1e-12)
     assert res.contributions["f"] == pytest.approx(res.total_return)
+
+
+def test_factor_attribution_no_lookahead() -> None:
+    """B7:暴露在 T=1 日由 0 突变到 1、因子收益全期常数。
+
+    T=1 日贡献 = 滞后暴露 expo[0]=0 × fret → 0(无前视);仅 T=2、T=3 贡献非零。
+    """
+    days = pd.date_range("2024-01-01", periods=4)
+    expo = pd.DataFrame({"f": [0.0, 1.0, 1.0, 1.0]}, index=days)
+    fret = pd.DataFrame({"f": [0.01, 0.01, 0.01, 0.01]}, index=days)
+    res = factor_attribution((expo * fret).sum(axis=1), expo, fret)
+    # 滞后暴露 = [0, 0, 1, 1] → 贡献 = 0.01×2 = 0.02
+    assert res.contributions["f"] == pytest.approx(0.02)
 
 
 # ── 因子暴露 / 行业分布 ───────────────────────────────────

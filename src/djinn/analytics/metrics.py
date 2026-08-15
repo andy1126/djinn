@@ -28,7 +28,8 @@ class Metrics:
     calmar: float = 0.0  # Calmar
     win_rate: float = 0.0  # 胜率(按交易)
     profit_loss_ratio: float = 0.0  # 盈亏比
-    turnover: float = 0.0  # 换手率
+    turnover: float = 0.0  # 换手率(双边、区间合计、未年化)
+    turnover_annual: float = 0.0  # 单边年化换手(B8)
     n_trades: int = 0
     n_days: int = 0
     cagr: float = 0.0
@@ -51,6 +52,7 @@ class Metrics:
             "win_rate": self.win_rate,
             "profit_loss_ratio": self.profit_loss_ratio,
             "turnover": self.turnover,
+            "turnover_annual": self.turnover_annual,
             "n_trades": self.n_trades,
             "n_days": self.n_days,
             "cagr": self.cagr,
@@ -139,18 +141,18 @@ def compute_metrics(
     rf_daily = rf / af
     excess = rets - rf_daily
     sharpe = float(excess.mean() / daily_vol * np.sqrt(af)) if daily_vol > 0 else 0.0
-    downside = rets[rets < 0]
-    downside_vol = float(downside.std(ddof=0)) if len(downside) > 0 else 0.0
-    sortino = (
-        float(excess.mean() / downside_vol * np.sqrt(af)) if downside_vol > 0 else 0.0
-    )
+    # B3:索提诺标准口径 —— 下行阈值用 MAR(rf 日化),下行偏差用全样本下半方差
+    downside = np.minimum(excess, 0.0)
+    downside_dev = float(np.sqrt((downside**2).mean()) * np.sqrt(af))
+    sortino = float(excess.mean() * af / downside_dev) if downside_dev > 0 else 0.0
     mdd, dd = compute_max_drawdown(equity)
-    calmar = float(ann_return / abs(mdd)) if mdd < 0 else 0.0
+    # B4:零回撤 → Calmar 未定义(NaN),而非 0(避免 sweep 排序把最优组合排最后)
+    calmar = float(ann_return / abs(mdd)) if mdd < 0 else float("nan")
 
-    # 尾部风险 / 回撤时长 / 连亏
-    var_95 = float(-rets.quantile(0.05))
+    # 尾部风险 / 回撤时长 / 连亏(B8:VaR/CVaR 非负,历史法日度)
+    var_95 = max(0.0, -float(rets.quantile(0.05)))
     tail = rets[rets <= rets.quantile(0.05)]
-    cvar_95 = float(-tail.mean()) if len(tail) > 0 else 0.0
+    cvar_95 = max(0.0, -float(tail.mean())) if len(tail) > 0 else 0.0
     max_dd_duration = _max_underwater_days(dd)
     max_losing = _max_losing_streak(rets)
 
@@ -160,6 +162,8 @@ def compute_metrics(
 
     # 换手率 = 期间成交额 / 平均净值
     turnover = _turnover(equity, trades)
+    # B8:单边年化换手 = 双边区间合计 × af / n_days / 2
+    turnover_annual = turnover * af / len(equity) / 2.0 if len(equity) > 1 else 0.0
 
     return Metrics(
         total_return=total_return,
@@ -172,6 +176,7 @@ def compute_metrics(
         win_rate=win_rate,
         profit_loss_ratio=pl_ratio,
         turnover=turnover,
+        turnover_annual=turnover_annual,
         n_trades=len(trades),
         n_days=len(equity),
         cagr=cagr,
@@ -241,7 +246,11 @@ def rolling_volatility(
 def monthly_returns(equity: pd.Series) -> pd.DataFrame:
     """月度收益矩阵(行=年,列=月),供热力图。"""
     monthly = equity.resample("ME").last().ffill()
-    mret = monthly.pct_change().dropna()
+    mret = monthly.pct_change()
+    # B5:补首月收益(首月末/期初 − 1),否则 pct_change 首行为 NaN 被 dropna 丢掉
+    if len(mret) > 0:
+        mret.iloc[0] = float(monthly.iloc[0] / equity.iloc[0] - 1.0)
+    mret = mret.dropna()
     idx = pd.DatetimeIndex(mret.index)
     df = pd.DataFrame({"year": idx.year, "month": idx.month, "ret": mret.values})
     pivot = df.pivot_table(index="year", columns="month", values="ret")

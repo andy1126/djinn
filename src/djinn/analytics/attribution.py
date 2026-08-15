@@ -186,7 +186,8 @@ def factor_attribution(
     common = portfolio_returns.index.intersection(factor_exposures.index).intersection(
         factor_returns.index
     )
-    expo = factor_exposures.reindex(common).fillna(0.0)
+    # B7:暴露滞后一日 —— t 日收益由 t−1 日收盘暴露解释(与 Brinson 一致,防前视)
+    expo = factor_exposures.reindex(common).fillna(0.0).shift(1).fillna(0.0)
     fret = factor_returns.reindex(common).fillna(0.0)
     port = portfolio_returns.reindex(common).fillna(0.0)
     factors = [c for c in expo.columns if c in fret.columns]
