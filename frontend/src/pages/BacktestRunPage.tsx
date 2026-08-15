@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, InputNumber, Progress, Row, Select, Space, message } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, InputNumber, Popconfirm, Progress, Row, Select, Space, message } from 'antd'
 import dayjs from 'dayjs'
-import { createBacktest, errDetail, listStrategies } from '@/api/client'
+import { cancelJob, createBacktest, errDetail, listStrategies } from '@/api/client'
 import ProfilePicker from '@/components/ProfilePicker'
 import StrategyParamForm from '@/components/StrategyParamForm'
 import { useJobProgress } from '@/hooks/useJobProgress'
@@ -227,6 +227,23 @@ export default function BacktestRunPage() {
                 <Alert type="warning" showIcon message="实时连接已断开,已切换轮询" />
               )}
               {progress.error && <Alert type="error" message={progress.error} />}
+              {(progress.status === 'running' || progress.status === 'pending') && (
+                <Popconfirm
+                  title="停止任务?"
+                  okText="停止"
+                  cancelText="取消"
+                  onConfirm={async () => {
+                    try {
+                      await cancelJob(jobId!)
+                      message.success('已请求停止')
+                    } catch (e) {
+                      message.error(errDetail(e))
+                    }
+                  }}
+                >
+                  <Button danger size="small">停止任务</Button>
+                </Popconfirm>
+              )}
               {progress.status === 'done' && (
                 <Button type="primary" onClick={() => navigate(`/results/${jobId}`)}>查看结果</Button>
               )}

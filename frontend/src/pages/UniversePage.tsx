@@ -8,6 +8,7 @@ import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { errDetail, getIndexComponents, getStockDetail, listIndexes, listProfiles, searchStocks, updateProfile } from '@/api/client'
 import type { IndexInfo, Profile, StockDetail as StockDetailT, SymbolSearchResult } from '@/types'
 import ProfileManager from '@/components/ProfileManager'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 
 const HISTORY_KEY = 'djinn:recent_stocks'
@@ -193,7 +194,7 @@ function DetailCard({ detail, profiles, onAddToProfile }: {
           <Typography.Title level={5} style={{ marginTop: 16 }}>扩展档案</Typography.Title>
           <Row gutter={16}>
             {profileGroups.map((g) => (
-              <Col key={g.title} span={8} style={{ marginBottom: 12 }}>
+              <Col key={g.title} xs={24} sm={12} lg={8} style={{ marginBottom: 12 }}>
                 <Descriptions size="small" column={1} title={g.title} bordered>
                   {g.items.map((f) => (
                     <Descriptions.Item key={f.label} label={f.label}>
@@ -236,7 +237,11 @@ export default function UniversePage() {
   // F20:指数成分大列表分页(每页 100,避免 800 只全量渲染)
   const [compPage, setCompPage] = useState<number>(1)
 
-  const { data: indexes } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
+  const {
+    data: indexes,
+    error: indexesError,
+    refetch: refetchIndexes,
+  } = useQuery({ queryKey: ['indexes'], queryFn: listIndexes })
   const qc = useQueryClient()
   const { data: profiles } = useQuery({ queryKey: ['profiles'], queryFn: listProfiles })
   const profileList = profiles || []
@@ -270,7 +275,8 @@ export default function UniversePage() {
 
   const { data: searchResp, isFetching: searching } = useQuery({
     queryKey: ['stock-search', debouncedQuery, market],
-    queryFn: () => searchStocks(debouncedQuery, market),
+    // F11:传 AbortSignal,快速输入时旧请求被取消(不并发乱序)
+    queryFn: ({ signal }) => searchStocks(debouncedQuery, market, signal),
     enabled: tab === 'search' && debouncedQuery.trim().length >= 1,
   })
   const searchOptions = (searchResp?.results || []).map((r) => ({
@@ -316,6 +322,7 @@ export default function UniversePage() {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Typography.Title level={3}>股票池</Typography.Title>
+      {indexesError && <QueryErrorAlert error={indexesError} retry={refetchIndexes} />}
       <Segmented
         value={tab}
         onChange={(v) => {

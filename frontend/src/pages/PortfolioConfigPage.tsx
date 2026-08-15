@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Slider, Tag, Typography } from 'antd'
+import { Button, Card, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Slider, Tag, Typography } from 'antd'
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
 import ProfilePicker from '@/components/ProfilePicker'
 import { useConfigStore } from '@/store/configStore'
@@ -9,14 +9,27 @@ import type { Profile } from '@/types'
 export default function PortfolioConfigPage() {
   const navigate = useNavigate()
   const { config, updateConfig } = useConfigStore()
-  const [symbols, setSymbols] = useState<{ sym: string; weight: number }[]>(
-    config.universe.symbols.map((s) => ({ sym: s, weight: 1 / config.universe.symbols.length })),
-  )
+  // F3:draft 从 store 派生,store 变化时同步(消除"过期副本"状态不一致)
+  const [symbols, setSymbols] = useState<{ sym: string; weight: number }[]>([])
+  const [dirtyWeight, setDirtyWeight] = useState(false)
+
+  useEffect(() => {
+    const syms = config.universe.symbols
+    const customWeights =
+      config.portfolio.allocation === 'custom' && config.portfolio.weights
+        ? config.portfolio.weights
+        : null
+    setSymbols(
+      syms.map((s) => ({ sym: s, weight: customWeights?.[s] ?? 1 / Math.max(1, syms.length) })),
+    )
+  }, [config.universe.symbols, config.portfolio.allocation, config.portfolio.weights])
 
   const addSymbol = () => setSymbols([...symbols, { sym: '', weight: 0 }])
   const removeSymbol = (idx: number) => setSymbols(symbols.filter((_, i) => i !== idx))
-  const updateSymbol = (idx: number, key: 'sym' | 'weight', v: string | number) =>
+  const updateSymbol = (idx: number, key: 'sym' | 'weight', v: string | number) => {
+    if (key === 'weight') setDirtyWeight(true)
     setSymbols(symbols.map((s, i) => (i === idx ? { ...s, [key]: v } : s)))
+  }
 
   const onLoadProfile = (p: Profile) => {
     setSymbols(p.symbols.map((s) => ({ sym: s, weight: 1 / p.symbols.length })))
@@ -28,8 +41,26 @@ export default function PortfolioConfigPage() {
     const weights: Record<string, number> = {}
     symbols.forEach((s) => { if (s.sym.trim()) weights[s.sym.trim()] = s.weight })
     const total = Object.values(weights).reduce((a, b) => a + b, 0)
+    const isCustom = config.portfolio.allocation === 'custom'
+    // F3:非 custom 下用户手调过权重 → 确认是否切自定义,而非静默丢弃
+    if (!isCustom && dirtyWeight && total > 0) {
+      Modal.confirm({
+        title: '手调权重将不生效',
+        content: '当前分配方式为等权/市值加权,手调权重不会生效。是否切换为自定义权重?',
+        okText: '切换为自定义',
+        cancelText: '仅保存标的',
+        onOk: () => {
+          updateConfig('portfolio', { ...config.portfolio, allocation: 'custom', weights })
+          updateConfig('universe', { ...config.universe, symbols: syms })
+        },
+        onCancel: () => {
+          updateConfig('universe', { ...config.universe, symbols: syms })
+        },
+      })
+      return
+    }
     updateConfig('universe', { ...config.universe, symbols: syms })
-    if (config.portfolio.allocation === 'custom' && total > 0) {
+    if (isCustom && total > 0) {
       updateConfig('portfolio', { ...config.portfolio, weights })
     }
   }
@@ -44,7 +75,7 @@ export default function PortfolioConfigPage() {
           等权/市值加权时权重会自动计算;自定义权重需手动指定(总和应接近 1)。
         </Typography.Paragraph>
         {symbols.map((s, i) => (
-          <Row key={i} gutter={8} style={{ marginBottom: 8 }} align="middle">
+          <Row key={s.sym || `row-${i}`} gutter={8} style={{ marginBottom: 8 }} align="middle">
             <Col xs={24} md={10}>
               <Input placeholder="标的代码" value={s.sym} onChange={(e) => updateSymbol(i, 'sym', e.target.value)} />
             </Col>

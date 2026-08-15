@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
 import { python } from '@codemirror/lang-python'
+import { useUiStore } from '@/store/uiStore'
 import {
   Alert, Button, Card, Col, Input, Modal, Popconfirm, Row, Space, Table, Tag, Typography, message,
 } from 'antd'
@@ -21,6 +22,7 @@ const DEFAULT_TEMPLATE = `def my_roc(close, n=5):
 
 export default function IndicatorLibraryPage() {
   const qc = useQueryClient()
+  const dark = useUiStore((s) => s.dark)  // F18:CodeMirror 随主题
   const [viewing, setViewing] = useState<IndicatorInfo | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -172,7 +174,7 @@ export default function IndicatorLibraryPage() {
                 </Col>
               </Row>
               <Typography.Text>代码</Typography.Text>
-              <CodeMirror value={code} onChange={(v) => setCode(v)} height="260px" theme="light" extensions={[python()]} />
+              <CodeMirror value={code} onChange={(v) => setCode(v)} height="260px" theme={dark ? 'dark' : 'light'} extensions={[python()]} />
               <Space>
                 <Button onClick={doValidate} loading={validateMut.isPending}>验证</Button>
                 <Button type="primary" onClick={save} loading={createMut.isPending || updateMut.isPending}>保存</Button>

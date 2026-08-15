@@ -127,8 +127,11 @@ export default function HomePage() {
             <Fragment key={m.key}>
               <Card
                 hoverable
+                role="button"
+                tabIndex={0}
                 onClick={() => navigate(m.path)}
-                style={{ flex: '1 1 160px', minWidth: 150, textAlign: 'center' }}
+                onKeyDown={(e) => { if (e.key === 'Enter') navigate(m.path) }}
+                style={{ flex: '1 1 160px', minWidth: 150, textAlign: 'center', cursor: 'pointer' }}
                 styles={{ body: { padding: 16 } }}
               >
                 <div style={{ fontSize: 24, color: '#1677ff', marginBottom: 8 }}>{m.icon}</div>

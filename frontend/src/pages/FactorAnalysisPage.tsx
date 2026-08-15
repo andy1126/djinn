@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Button, Card, Collapse, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Tag, Tooltip, Typography,
 } from 'antd'
 import { QuestionCircleOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import {
   listFactors,
   listIndexes,
@@ -17,10 +18,17 @@ import type { FactorInfo, FactorReport, IndexInfo, JobStatus } from '@/types'
 import QuantileCurveChart from '@/components/charts/QuantileCurveChart'
 import ICBarChart from '@/components/charts/ICBarChart'
 import JobHistoryTable from '@/components/JobHistoryTable'
+import { useJobTransitionNotify } from '@/hooks/useJobTransitionNotify'
 import ParamField from '@/components/ParamFields'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 import { IC_RANGE_HELP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
+
+/** 后端 _recommend_freq 输出的调仓频率档 → 中文(C11)。 */
+const FREQ_LABEL: Record<string, string> = {
+  daily: '日频', weekly: '周频', monthly: '月频', quarterly: '季频',
+}
 
 interface FormValues {
   factor: string
@@ -46,11 +54,23 @@ function MetricTag({ label, value, tip }: { label: string; value: string; tip: s
 export default function FactorAnalysisPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // F14:深链 —— 从 URL ?job=<id> 恢复;切换任务时写回 URL
+  const [jobId, setJobId] = useState<string | null>(() => searchParams.get('job'))
   const [selected, setSelected] = useState<FactorInfo | null>(null)
   const [params, setParams] = useState<Record<string, number | string | boolean | null>>({})
 
-  const { data: factorsResp, isLoading: factorsLoading } = useQuery({
+  useEffect(() => {
+    if (jobId) setSearchParams({ job: jobId }, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId])
+
+  const {
+    data: factorsResp,
+    isLoading: factorsLoading,
+    error: factorsError,
+    refetch: refetchFactors,
+  } = useQuery({
     queryKey: ['factors'],
     queryFn: listFactors,
   })
@@ -84,6 +104,8 @@ export default function FactorAnalysisPage() {
       return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
     },
   })
+  // F16:因子分析任务 running→终态 → 全局通知
+  useJobTransitionNotify(historyJobs, 'factor-analysis')
 
   const poll = useQuery({
     queryKey: ['factor-analysis-job', jobId],
@@ -133,6 +155,7 @@ export default function FactorAnalysisPage() {
       <Typography.Title level={3}>因子分析</Typography.Title>
 
       <Card title="单因子分析">
+        {factorsError && <QueryErrorAlert error={factorsError} retry={refetchFactors} />}
         <Form
           form={form}
           layout="vertical"
@@ -206,13 +229,38 @@ export default function FactorAnalysisPage() {
 
       {report && (
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Card title={`IC 汇总 · ${report.factor_name}`}>
+          {report.data_caveats?.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message="数据口径提示"
+              description={report.data_caveats.join('; ')}
+            />
+          )}
+          <Card
+            title={`IC 汇总 · ${report.factor_name}`}
+            extra={
+              <Button
+                size="small"
+                onClick={() => { navigator.clipboard.writeText(location.href); message.success('链接已复制') }}
+              >复制链接</Button>
+            }
+          >
             <Space size="large" wrap>
               <MetricTag label="IC 均值" value={(report.ic_summary.ic_mean ?? 0).toFixed(4)} tip={METRIC_TIP['IC 均值']} />
               <MetricTag label="ICIR" value={(report.ic_summary.icir ?? 0).toFixed(4)} tip={METRIC_TIP['ICIR']} />
+              <MetricTag label="t 值" value={`${(report.ic_summary.ic_t ?? 0).toFixed(2)} (p=${(report.ic_summary.ic_pvalue ?? 1).toFixed(3)})`} tip={METRIC_TIP['t 值']} />
               <MetricTag label="IC 正值占比" value={`${((report.ic_summary.ic_pos_ratio ?? 0) * 100).toFixed(1)}%`} tip={METRIC_TIP['IC 正值占比']} />
               <MetricTag label="单调性" value={(report.monotonicity ?? 0).toFixed(3)} tip={METRIC_TIP['单调性']} />
               <MetricTag label="换手" value={(report.turnover ?? 0).toFixed(3)} tip={METRIC_TIP['换手']} />
+              {report.recommended_rebalance && (
+                <Tooltip title={METRIC_TIP['建议调仓频率']}>
+                  <Tag color="blue" style={{ cursor: 'help', userSelect: 'none' }}>
+                    建议调仓频率: {FREQ_LABEL[report.recommended_rebalance] ?? report.recommended_rebalance}{' '}
+                    <QuestionCircleOutlined style={{ color: '#bbb' }} />
+                  </Tag>
+                </Tooltip>
+              )}
             </Space>
           </Card>
           <Collapse

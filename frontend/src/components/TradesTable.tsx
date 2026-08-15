@@ -27,7 +27,10 @@ export default function TradesTable({ trades }: Props) {
   return (
     <Table
       columns={columns}
-      dataSource={trades.map((t, i) => ({ key: i, ...t }))}
+      dataSource={trades.map((t, i) => ({
+        key: `${t.timestamp ?? i}-${t.symbol ?? ''}-${t.order_id ?? i}`,
+        ...t,
+      }))}
       size="small"
       pagination={{ pageSize: 20 }}
       scroll={{ x: 'max-content' }}

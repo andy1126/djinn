@@ -6,6 +6,7 @@ import {
 import { createSweep, errDetail, getStrategy, listSweeps } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import JobHistoryTable from '@/components/JobHistoryTable'
+import { useJobTransitionNotify } from '@/hooks/useJobTransitionNotify'
 import type { JobStatus, ParamSchema, SweepResultRow } from '@/types'
 
 /**
@@ -16,6 +17,8 @@ const AXIS_OPTIONS = [
   { value: '__param__', label: '策略参数(自定义 key)' },
   { value: 'universe.index', label: 'universe.index 成分池' },
   { value: 'strategy.factor_weights', label: 'strategy.factor_weights 因子组合' },
+  { value: 'strategy.weighting', label: 'strategy.weighting 因子加权' },
+  { value: 'strategy.min_score_diff', label: 'strategy.min_score_diff 换手惩罚' },
   { value: 'portfolio.allocation', label: 'portfolio.allocation 权重法' },
   { value: 'strategy.n_stocks', label: 'strategy.n_stocks 选股数' },
   { value: 'strategy.rebalance_freq', label: 'strategy.rebalance_freq 调仓频率' },
@@ -23,6 +26,7 @@ const AXIS_OPTIONS = [
 
 const ALLOCATION_OPTIONS = ['equal', 'market_cap', 'custom', 'score', 'risk_parity', 'min_variance', 'mean_variance']
 const INDEX_OPTIONS = ['CSI300', 'CSI500', 'CSI800', 'HSI', 'SP500', 'NASDAQ100', 'DOWJONES']
+const WEIGHTING_OPTIONS = ['static', 'icir']
 
 interface AxisDraft {
   uid: number
@@ -93,6 +97,8 @@ export default function SweepPage() {
       return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
     },
   })
+  // F16:扫描任务 running→终态 → 全局通知
+  useJobTransitionNotify(jobs, 'sweep')
 
   // 策略参数 schema(供「策略参数」扫轴的下拉 + 默认扫值联动)
   const { data: strategyInfo } = useQuery({
@@ -260,6 +266,15 @@ export default function SweepPage() {
                         onChange={(vs) => update(d.uid, { valuesRaw: vs.join(',') })}
                         options={INDEX_OPTIONS.map((a) => ({ value: a, label: a }))}
                         style={{ minWidth: 220 }}
+                      />
+                    ) : d.axis === 'strategy.weighting' ? (
+                      <Select
+                        mode="multiple"
+                        placeholder="选加权方式"
+                        value={d.valuesRaw ? d.valuesRaw.split(',').map((s) => s.trim()) : []}
+                        onChange={(vs) => update(d.uid, { valuesRaw: vs.join(',') })}
+                        options={WEIGHTING_OPTIONS.map((a) => ({ value: a, label: a }))}
+                        style={{ minWidth: 200 }}
                       />
                     ) : (
                       <Input.TextArea

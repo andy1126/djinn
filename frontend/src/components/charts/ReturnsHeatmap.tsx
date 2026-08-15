@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { DataFrameData } from '@/types'
 
 interface Props {
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function ReturnsHeatmap({ monthly, height = 320 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   if (!monthly.data.length) {
     return <div style={{ height, padding: 40, textAlign: 'center', color: '#999' }}>无月度收益数据</div>
   }
@@ -26,13 +28,15 @@ export default function ReturnsHeatmap({ monthly, height = 320 }: Props) {
   })
 
   const option = {
+    ...theme,
     tooltip: {
+      ...theme.tooltip,
       position: 'top',
       valueFormatter: (v: number) => (v * 100).toFixed(2) + '%',
     },
     grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
-    xAxis: { type: 'category', data: months, splitArea: { show: true } },
-    yAxis: { type: 'category', data: years, splitArea: { show: true } },
+    xAxis: { ...theme.xAxis, type: 'category', data: months, splitArea: { show: true } },
+    yAxis: { ...theme.yAxis, type: 'category', data: years, splitArea: { show: true } },
     visualMap: {
       min: min,
       max: max,

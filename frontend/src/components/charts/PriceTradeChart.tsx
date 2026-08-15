@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { DataFrameData, TradeRecord } from '@/types'
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 
 /** 股票收盘价走势曲线 + 买卖点标记(绿三角=买,红倒三角=卖)。 */
 export default function PriceTradeChart({ prices, trades, height = 420 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   const dates = prices?.index || []
   const symbols = prices?.columns || []
   const data = prices?.data || []
@@ -44,11 +46,12 @@ export default function PriceTradeChart({ prices, trades, height = 420 }: Props)
   }
 
   const option = {
-    tooltip: { trigger: 'axis' },
+    ...theme,
+    tooltip: { ...theme.tooltip, trigger: 'axis' },
     legend: { data: [...symbols, '买入', '卖出'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'time' },
-    yAxis: { type: 'value', scale: true },
+    xAxis: { ...theme.xAxis, type: 'time' },
+    yAxis: { ...theme.yAxis, type: 'value', scale: true },
     dataZoom: [
       { type: 'inside', start: 0, end: 100 },
       { type: 'slider', start: 0, end: 100, height: 20 },

@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { DataFrameData } from '@/types'
 
 interface Props {
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function PositionAreaChart({ weights, height = 280 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   if (!weights.data.length) {
     return <div style={{ height, padding: 40, textAlign: 'center', color: '#999' }}>无持仓数据</div>
   }
@@ -21,11 +23,12 @@ export default function PositionAreaChart({ weights, height = 280 }: Props) {
   }))
 
   const option = {
-    tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
-    legend: { data: symbols, top: 0 },
+    ...theme,
+    tooltip: { ...theme.tooltip, trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
+    legend: { ...theme.legend, data: symbols, top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', top: 40, containLabel: true },
-    xAxis: { type: 'time' },
-    yAxis: { type: 'value', max: 1, axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' } },
+    xAxis: { ...theme.xAxis, type: 'time' },
+    yAxis: { ...theme.yAxis, type: 'value', max: 1, axisLabel: { ...theme.yAxis.axisLabel, formatter: (v: number) => (v * 100).toFixed(0) + '%' } },
     series,
   }
   return <ReactECharts option={option} notMerge style={{ height }} />

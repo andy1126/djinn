@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { DataFrameData } from '@/types'
 
 interface Props {
@@ -20,6 +21,7 @@ export default function MatrixHeatmap({
   formatter,
   symmetric = true,
 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   if (!matrix.data.length) {
     return (
       <div style={{ height, padding: 40, textAlign: 'center', color: '#999' }}>
@@ -45,7 +47,9 @@ export default function MatrixHeatmap({
   const fmt = formatter ?? ((v: number) => v.toFixed(2))
 
   const option = {
+    ...theme,
     tooltip: {
+      ...theme.tooltip,
       position: 'top',
       formatter: (p: { value: number[] }) => {
         const v = p.value[2]
@@ -54,12 +58,14 @@ export default function MatrixHeatmap({
     },
     grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
     xAxis: {
+      ...theme.xAxis,
       type: 'category',
       data: cols,
       splitArea: { show: true },
-      axisLabel: { rotate: 30 },
+      axisLabel: { ...theme.xAxis.axisLabel, rotate: 30 },
     },
     yAxis: {
+      ...theme.yAxis,
       type: 'category',
       data: rows,
       splitArea: { show: true },

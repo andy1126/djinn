@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { SeriesData } from '@/types'
 
 interface Props {
@@ -18,6 +19,7 @@ interface LineSeries {
 }
 
 export default function EquityCurveChart({ equity, benchmark, logScale, height = 360 }: Props) {
+  const theme = useChartTheme()
   const series: LineSeries[] = [
     {
       name: '策略净值',
@@ -39,13 +41,15 @@ export default function EquityCurveChart({ equity, benchmark, logScale, height =
   }
 
   const option = {
+    ...theme,
     tooltip: { trigger: 'axis' },
-    legend: { data: ['策略净值', '基准'] },
+    legend: { data: ['策略净值', '基准'], textStyle: theme.legend.textStyle },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'time' },
+    xAxis: { type: 'time', ...theme.xAxis },
     yAxis: {
       type: logScale ? 'log' : 'value',
-      axisLabel: { formatter: (v: number) => v.toFixed(2) },
+      ...theme.yAxis,
+      axisLabel: { ...theme.yAxis.axisLabel, formatter: (v: number) => v.toFixed(2) },
     },
     dataZoom: [
       { type: 'inside', start: 0, end: 100 },

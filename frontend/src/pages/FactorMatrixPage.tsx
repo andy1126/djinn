@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Table, Tag, Tooltip, Typography,
+  Alert, Button, Card, DatePicker, Form, InputNumber, message, Progress, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography,
 } from 'antd'
 import { QuestionCircleOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import {
   listFactors,
   listIndexes,
@@ -16,7 +17,9 @@ import {
 import type { FactorInfo, FactorMatrixPoint, FactorMatrixReport, IndexInfo, JobStatus } from '@/types'
 import MatrixHeatmap from '@/components/charts/MatrixHeatmap'
 import JobHistoryTable from '@/components/JobHistoryTable'
+import { useJobTransitionNotify } from '@/hooks/useJobTransitionNotify'
 import ParamField from '@/components/ParamFields'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
 import { CORR_MATRIX_TIP, METRIC_TIP } from '@/components/factorMetricsHelp'
 
 const { RangePicker } = DatePicker
@@ -25,6 +28,7 @@ interface FormValues {
   index?: string
   range: [Date, Date]
   ic_method: string
+  orthogonalized?: boolean
 }
 
 interface PointDraft extends FactorMatrixPoint {
@@ -51,10 +55,22 @@ function HelpTitle({ text, tip }: { text: string; tip: string }) {
 export default function FactorMatrixPage() {
   const qc = useQueryClient()
   const [form] = Form.useForm<FormValues>()
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // F14:深链 —— 从 URL ?job=<id> 恢复;切换任务时写回 URL
+  const [jobId, setJobId] = useState<string | null>(() => searchParams.get('job'))
+
+  useEffect(() => {
+    if (jobId) setSearchParams({ job: jobId }, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId])
   const [drafts, setDrafts] = useState<PointDraft[]>([])
 
-  const { data: factorsResp, isLoading: factorsLoading } = useQuery({
+  const {
+    data: factorsResp,
+    isLoading: factorsLoading,
+    error: factorsError,
+    refetch: refetchFactors,
+  } = useQuery({
     queryKey: ['factors'],
     queryFn: listFactors,
   })
@@ -88,6 +104,8 @@ export default function FactorMatrixPage() {
       return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
     },
   })
+  // F16:多因子诊断任务 running→终态 → 全局通知
+  useJobTransitionNotify(historyJobs, 'factor-matrix')
 
   const poll = useQuery({
     queryKey: ['factor-matrix-job', jobId],
@@ -158,6 +176,7 @@ export default function FactorMatrixPage() {
       end: v.range[1].toISOString().slice(0, 10),
       ic_method: v.ic_method,
       periods: [1, 5, 10],
+      orthogonalized: v.orthogonalized ?? false,
     })
   }
 
@@ -173,12 +192,16 @@ export default function FactorMatrixPage() {
   const turnoverRows = report
     ? Object.entries(report.turnover).map(([name, v]) => ({ key: name, factor: name, turnover: v }))
     : []
+  const fmbRows = report?.fmb
+    ? Object.entries(report.fmb.lambdas).map(([name, l]) => ({ key: name, factor: name, ...l }))
+    : []
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Typography.Title level={3}>多因子诊断</Typography.Title>
 
       <Card title="因子选择(2~8 个)">
+        {factorsError && <QueryErrorAlert error={factorsError} retry={refetchFactors} />}
         <Space direction="vertical" style={{ width: '100%' }} size="small">
           {drafts.map((d) => {
             const info = factors.find((f) => f.name === d.factor)
@@ -240,7 +263,7 @@ export default function FactorMatrixPage() {
           form={form}
           layout="vertical"
           onFinish={onSubmit}
-          initialValues={{ index: 'CSI300', ic_method: 'spearman' }}
+          initialValues={{ index: 'CSI300', ic_method: 'spearman', orthogonalized: false }}
         >
           <Form.Item name="index" label="宽基指数">
             <Select options={indexOptions} showSearch optionFilterProp="label" />
@@ -259,6 +282,14 @@ export default function FactorMatrixPage() {
           </Form.Item>
           <Form.Item name="ic_method" label="IC 相关方法">
             <Select options={[{ value: 'spearman', label: 'Spearman' }, { value: 'pearson', label: 'Pearson' }]} />
+          </Form.Item>
+          <Form.Item
+            name="orthogonalized"
+            label="正交化相关矩阵"
+            valuePropName="checked"
+            tooltip="用 Schmidt 正交化后的因子重算相关矩阵(按添加顺序,后序因子对前序取残差),验证正交化是否让因子间相关归零。IC 汇总与 FMB 仍用原始因子。"
+          >
+            <Switch />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={mut.isPending} disabled={drafts.length < 2}>
@@ -287,7 +318,15 @@ export default function FactorMatrixPage() {
 
       {report && (
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Card title={<HelpTitle text="因子两两相关矩阵" tip={CORR_MATRIX_TIP} />}>
+          <Card
+            title={<HelpTitle text="因子两两相关矩阵" tip={CORR_MATRIX_TIP} />}
+            extra={
+              <Button
+                size="small"
+                onClick={() => { navigator.clipboard.writeText(location.href); message.success('链接已复制') }}
+              >复制链接</Button>
+            }
+          >
             <MatrixHeatmap matrix={report.correlation} height={460} />
           </Card>
           <Card title="各因子 IC 汇总">
@@ -328,6 +367,36 @@ export default function FactorMatrixPage() {
               ]}
             />
           </Card>
+          {report.fmb && (
+            <Card
+              title={<HelpTitle text={`Fama-MacBeth 因子收益 (n=${report.fmb.n_days})`} tip="Fama-MacBeth 逐日截面回归得到每个因子的风险溢价 λ 时序,再对其均值做 Newey-West t 检验,判断多因子风险溢价的统计显著性。" />}
+            >
+              <Table
+                size="small"
+                dataSource={fmbRows}
+                pagination={false}
+                columns={[
+                  { title: '因子', dataIndex: 'factor', key: 'factor' },
+                  {
+                    title: <HelpTitle text="λ 均值" tip={METRIC_TIP['λ 均值']} />, dataIndex: 'lambda_mean', key: 'lambda_mean',
+                    render: (v: number) => (v ?? 0).toFixed(6),
+                  },
+                  {
+                    title: <HelpTitle text="λ t 值" tip={METRIC_TIP['λ t 值']} />, dataIndex: 'lambda_t', key: 'lambda_t',
+                    render: (v: number) => (v ?? 0).toFixed(3),
+                  },
+                  {
+                    title: 'λ p 值', dataIndex: 'lambda_pvalue', key: 'lambda_pvalue',
+                    render: (v: number) => (v ?? 1).toFixed(3),
+                  },
+                  {
+                    title: '正值占比', dataIndex: 'pos_ratio', key: 'pos_ratio',
+                    render: (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`,
+                  },
+                ]}
+              />
+            </Card>
+          )}
         </Space>
       )}
       {jobId && !job && <Spin />}

@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { SeriesData } from '@/types'
 
 interface Props {
@@ -7,13 +8,16 @@ interface Props {
 }
 
 export default function DrawdownChart({ drawdown, height = 240 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   const option = {
+    ...theme,
     tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'time' },
+    xAxis: { type: 'time', ...theme.xAxis },
     yAxis: {
       type: 'value',
-      axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' },
+      ...theme.yAxis,
+      axisLabel: { ...theme.yAxis.axisLabel, formatter: (v: number) => (v * 100).toFixed(0) + '%' },
     },
     series: [
       {

@@ -1,6 +1,13 @@
 import { Form, InputNumber, Select, Input, Slider } from 'antd'
 import type { ParamSchema } from '@/types'
 
+/** 取一个数的小数位数(用于 Slider 拖拽后消除浮点漂移)。 */
+function decimalPlaces(n: number): number {
+  const s = String(n)
+  const i = s.indexOf('.')
+  return i === -1 ? 0 : s.length - i - 1
+}
+
 interface Props {
   schema: ParamSchema[]
   value: Record<string, number | string | boolean | null>
@@ -38,17 +45,33 @@ export default function StrategyParamForm({ schema, value, onChange }: Props) {
     }
     // 数值类型:若有 min/max 且范围合理,用 Slider;否则用 InputNumber
     if (p.min != null && p.max != null && p.max <= p.min + 200) {
+      const min = p.min as number
+      const max = p.max as number
+      const range = max - min
+      const isInt = p.type === 'int'
+      // int 用整数步长;float 按区间均分 100 份取小数步长,避免 step=1 跳穿小数区间
+      const step = isInt ? 1 : range / 100
+      // float 拖拽后按参数最小粒度取整,消除 0.0500…01 这类浮点漂移
+      const decimals = isInt
+        ? 0
+        : Math.min(
+            6,
+            Math.max(
+              decimalPlaces(min),
+              decimalPlaces(max),
+              decimalPlaces(typeof p.default === 'number' ? p.default : 0)
+            )
+          )
       return (
-        <div>
-          <Slider
-            min={p.min as number}
-            max={p.max as number}
-            step={1}
-            value={Number(v ?? p.default ?? p.min)}
-            onChange={(val) => update(p.name, val)}
-            marks={{ [p.min as number]: String(p.min), [p.max as number]: String(p.max) }}
-          />
-        </div>
+        <Slider
+          min={min}
+          max={max}
+          step={step}
+          value={Number(v ?? p.default ?? min)}
+          onChange={(val) =>
+            update(p.name, isInt ? (val as number) : Number((val as number).toFixed(decimals)))
+          }
+        />
       )
     }
     return (

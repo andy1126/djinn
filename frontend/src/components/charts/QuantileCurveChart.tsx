@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { DataFrameData } from '@/types'
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 
 /** 分层累计收益曲线(评估因子单调性:顶组 vs 底组是否持续分化)。 */
 export default function QuantileCurveChart({ quantileReturns, height = 340 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   const series = quantileReturns.columns.map((_c, idx) => ({
     name: `Q${idx + 1}`,
     type: 'line',
@@ -21,13 +23,15 @@ export default function QuantileCurveChart({ quantileReturns, height = 340 }: Pr
     emphasis: { focus: 'series' },
   }))
   const option = {
-    tooltip: { trigger: 'axis' },
+    ...theme,
+    tooltip: { ...theme.tooltip, trigger: 'axis' },
     legend: { data: quantileReturns.columns.map((_, idx) => `Q${idx + 1}`) },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category', data: quantileReturns.index },
+    xAxis: { ...theme.xAxis, type: 'category', data: quantileReturns.index },
     yAxis: {
+      ...theme.yAxis,
       type: 'value',
-      axisLabel: { formatter: (v: number) => (v * 100).toFixed(1) + '%' },
+      axisLabel: { ...theme.yAxis.axisLabel, formatter: (v: number) => (v * 100).toFixed(1) + '%' },
     },
     series,
   }

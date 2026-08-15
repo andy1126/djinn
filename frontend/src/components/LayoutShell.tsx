@@ -165,14 +165,16 @@ export default function LayoutShell() {
                         key: n.id,
                         label: `${n.title} — ${n.status}`,
                         onClick: () => {
-                          const kindPath: Record<string, string> = {
-                            backtest: '/results',
+                          // F16:backtest 走 /results/:id;alpha 类走 ?job= 深链(F14);
+                          // sweep 无任务深链 → 落页面根
+                          const kindRoute: Record<string, string> = {
+                            backtest: `/results/${n.jobId}`,
                             sweep: '/sweep',
-                            'factor-analysis': '/factors',
-                            'factor-matrix': '/factor-matrix',
-                            screen: '/screener',
+                            'factor-analysis': `/factors?job=${n.jobId}`,
+                            'factor-matrix': `/factor-matrix?job=${n.jobId}`,
+                            screen: `/screener?job=${n.jobId}`,
                           }
-                          navigate(`${kindPath[n.kind] ?? '/results'}/${n.jobId}`)
+                          navigate(kindRoute[n.kind] ?? `/results/${n.jobId}`)
                         },
                       }))
                     : [{ key: 'empty', label: '暂无通知', disabled: true }],

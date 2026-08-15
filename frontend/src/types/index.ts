@@ -166,6 +166,7 @@ export interface StrategyConfig {
     min_amount?: number | null
     min_list_days?: number | null
     exclude_st?: boolean
+    neutralize?: boolean
     industry_neutral?: boolean
     max_sector_weight?: number | null
     min_score_diff?: number
@@ -245,6 +246,8 @@ export interface SweepResultRow {
     'universe.index': string | null
     n_symbols: number
     'strategy.factor_weights': Record<string, number> | null
+    'strategy.weighting': string
+    'strategy.min_score_diff': number | null
     'portfolio.allocation': string
     'strategy.n_stocks': number | null
     'strategy.rebalance_freq': number | null
@@ -319,7 +322,9 @@ export interface Metrics {
   win_rate: number
   profit_loss_ratio: number
   turnover: number
+  turnover_annual?: number
   n_trades: number
+  n_round_trips?: number
   n_days: number
   var_95?: number
   cvar_95?: number
@@ -339,6 +344,7 @@ export interface BenchmarkStats {
   strategy_return?: number
   excess_return?: number
   downside_capture?: number
+  upside_capture?: number
   [key: string]: number | undefined
 }
 
@@ -366,6 +372,10 @@ export interface BacktestReport {
   prices: DataFrameData
   attribution: BrinsonResult | null
   factor_exposure: FactorExposureReport | null
+  meta?: {
+    data_caveats?: string[]
+    selection_log?: Array<{ date: string; selected: string[]; scores: Record<string, number> }>
+  }
 }
 
 // ── 归因(Phase 5)─────────────────────────────────────
@@ -413,6 +423,8 @@ export interface ICSummary {
   ic_std: number
   icir: number
   ic_pos_ratio: number
+  ic_t: number
+  ic_pvalue: number
   [key: string]: number
 }
 
@@ -428,6 +440,7 @@ export interface FactorReport {
   turnover: number
   ic_by_group: SeriesData
   recommended_rebalance: string | null
+  data_caveats: string[]
 }
 
 // ── 选股 ───────────────────────────────────────────────
@@ -630,6 +643,19 @@ export interface FactorMatrixRequest {
   adjust?: string
   ic_method?: string
   periods?: number[]
+  orthogonalized?: boolean
+}
+
+export interface FMBLambda {
+  lambda_mean: number
+  lambda_t: number
+  lambda_pvalue: number
+  pos_ratio: number
+}
+
+export interface FMBReport {
+  n_days: number
+  lambdas: Record<string, FMBLambda>
 }
 
 export interface FactorMatrixReport {
@@ -637,4 +663,5 @@ export interface FactorMatrixReport {
   correlation: DataFrameData
   ic_summary: Record<string, Record<string, ICSummary>>
   turnover: Record<string, number>
+  fmb: FMBReport | null
 }

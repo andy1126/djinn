@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Button, Card, DatePicker, Form, Input, InputNumber, message, Progress, Select, Space, Table, Tag, Typography,
+  Alert, Button, Card, DatePicker, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Table, Tag, Typography,
 } from 'antd'
 import {
   listFactors,
@@ -12,22 +12,20 @@ import {
   listScreenJobs,
   createScreen,
   getScreenJob,
+  listProfiles,
+  createProfile,
+  updateProfile,
   errDetail,
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
 import JobHistoryTable from '@/components/JobHistoryTable'
-import type { FactorInfo, IndexInfo, JobStatus, ScreenField, ScreenMarket, ScreenOp, ScreenResultRow } from '@/types'
+import { useJobTransitionNotify } from '@/hooks/useJobTransitionNotify'
+import { formatCompact } from '@/utils/format'
+import type { FactorInfo, IndexInfo, JobStatus, Profile, ScreenField, ScreenMarket, ScreenOp, ScreenResultRow } from '@/types'
 
 const OPS = ['gt', 'lt', 'ge', 'le', 'eq', 'between', 'in']
 
-// 数值格式化:市值类 ≥1e8 显示"x.xx 亿",≥1e4 "x.xx 万"
-function formatCompact(v: number): string {
-  if (v == null || Number.isNaN(v)) return '—'
-  if (Math.abs(v) >= 1e8) return `${(v / 1e8).toFixed(2)} 亿`
-  if (Math.abs(v) >= 1e4) return `${(v / 1e4).toFixed(2)} 万`
-  if (Number.isInteger(v)) return String(v)
-  return v.toFixed(4)
-}
+// 数值格式化(大额缩写):复用共享 utils/format(F2/F9,单点定义)
 
 // 结果行 → CSV 字符串(前端 Blob 下载)
 function toCsv(rows: Record<string, unknown>[]): string {
@@ -55,6 +53,12 @@ export default function ScreenerPage() {
   ])
   const [scores, setScores] = useState<Array<{ factor: string; weight: number; direction: 1 | -1 }>>([])
   const [topN, setTopN] = useState<number | null>(10)
+  // F2:加入 Profile(把选股结果写入已有/新建 Profile)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [profileName, setProfileName] = useState('')
+  const [profileTargetId, setProfileTargetId] = useState<string | null>(null)
+  const { data: profilesResp } = useQuery({ queryKey: ['profiles'], queryFn: listProfiles })
+  const profiles: Profile[] = profilesResp || []
 
   // F14:深链 —— 从 URL ?job=<id> 恢复查看的任务;切换任务时写回 URL
   useEffect(() => {
@@ -165,6 +169,8 @@ export default function ScreenerPage() {
       return data?.some((j) => j.status === 'pending' || j.status === 'running') ? 3000 : false
     },
   })
+  // F16:选股任务 running→终态 → 全局通知
+  useJobTransitionNotify(historyJobs, 'screen')
 
   const mut = useMutation({
     mutationFn: createScreen,
@@ -336,6 +342,7 @@ export default function ScreenerPage() {
                 <Space wrap>
                   <Button size="small" onClick={exportCsv}>导出 CSV</Button>
                   <Button size="small" type="primary" onClick={startBacktest}>用这组股票发起回测</Button>
+                  <Button size="small" onClick={() => setProfileOpen(true)}>加入 Profile</Button>
                   <Button
                     size="small"
                     onClick={() => { navigator.clipboard.writeText(location.href); message.success('链接已复制') }}
@@ -362,6 +369,58 @@ export default function ScreenerPage() {
           onOpen={(id) => selectJob(id)}
         />
       </Card>
+
+      {/* F2:把选股结果写入已有 Profile 或新建 */}
+      <Modal
+        title="把选股结果加入 Profile"
+        open={profileOpen}
+        onOk={async () => {
+          const syms = rows.map((r) => r.symbol)
+          try {
+            if (profileTargetId) {
+              const existing = profiles.find((p) => p.profile_id === profileTargetId)
+              await updateProfile(profileTargetId, {
+                name: profileName.trim() || existing?.name || '',
+                symbols: syms,
+              })
+              message.success('已更新 Profile')
+            } else {
+              if (!profileName.trim()) {
+                message.warning('请填写 Profile 名称')
+                return
+              }
+              await createProfile({ name: profileName.trim(), symbols: syms })
+              message.success('已创建 Profile')
+            }
+            qc.invalidateQueries({ queryKey: ['profiles'] })
+            setProfileOpen(false)
+            setProfileName('')
+            setProfileTargetId(null)
+          } catch (e) {
+            message.error(errDetail(e))
+          }
+        }}
+        onCancel={() => { setProfileOpen(false); setProfileName(''); setProfileTargetId(null) }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Typography.Text>将 {rows.length} 只标的写入:</Typography.Text>
+          <Select
+            allowClear
+            placeholder="选择已有 Profile 覆盖(不选则新建)"
+            style={{ width: '100%' }}
+            value={profileTargetId ?? undefined}
+            onChange={(v) => setProfileTargetId(v ?? null)}
+            options={profiles.map((p) => ({ value: p.profile_id, label: `${p.name}(${p.symbols.length}只)` }))}
+          />
+          {!profileTargetId && (
+            <Input
+              placeholder="新建 Profile 名称"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+            />
+          )}
+        </Space>
+      </Modal>
     </Space>
   )
 }

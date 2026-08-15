@@ -1,4 +1,5 @@
 import ReactECharts from 'echarts-for-react'
+import { useChartTheme } from '@/hooks/useChartTheme'
 import type { BrinsonResult } from '@/types'
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 
 /** Brinson 三效应按行业可视化(配置 / 选股 / 交互堆叠柱)。 */
 export default function BrinsonBarChart({ brinson, height = 340 }: Props) {
+  const theme = useChartTheme() // F18:暗色主题
   const ind = brinson.allocation.index
   const series = ['allocation', 'selection', 'interaction'].map((key) => {
     const s = (brinson as unknown as Record<string, { values: number[] }>)[key]
@@ -19,15 +21,17 @@ export default function BrinsonBarChart({ brinson, height = 340 }: Props) {
     }
   })
   const option = {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { data: series.map((s) => s.name) },
+    ...theme,
+    tooltip: { ...theme.tooltip, trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { ...theme.legend, data: series.map((s) => s.name) },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
+      ...theme.xAxis,
       type: 'category',
       data: ind,
-      axisLabel: { rotate: 30 },
+      axisLabel: { ...theme.xAxis.axisLabel, rotate: 30 },
     },
-    yAxis: { type: 'value' },
+    yAxis: { ...theme.yAxis, type: 'value' },
     series,
   }
   return <ReactECharts option={option} notMerge style={{ height }} />

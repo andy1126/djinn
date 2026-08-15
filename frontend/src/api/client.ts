@@ -52,6 +52,15 @@ const http = axios.create({
   timeout: 60000,
 })
 
+// E8:请求拦截器——配置了 DJINN_API_TOKEN 时统一带 Bearer(SettingsPage 存 localStorage)
+http.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem('djinn_api_token')
+  if (token && cfg.headers) {
+    cfg.headers.Authorization = `Bearer ${token}`
+  }
+  return cfg
+})
+
 // F7:全局响应拦截器——在错误对象上挂友好消息(列表页内联展示,不全局弹窗)
 http.interceptors.response.use(
   (resp) => resp,
@@ -150,6 +159,10 @@ export const exportBacktest = async (
 // ── 取消任务(E4/F17:统一端点)─────────────────────────────
 export const cancelJob = async (jobId: string): Promise<{ status: string }> =>
   (await http.post(`/jobs/${jobId}/cancel`)).data
+
+/** E6:清理 ``days`` 天前已终态的任务 + 报告缓存 + 导出文件。 */
+export const purgeJobs = async (days = 30): Promise<{ removed: number }> =>
+  (await http.post(`/jobs/purge?days=${days}`)).data
 
 // ── 扫描 ─────────────────────────────────────────────
 export const createSweep = async (req: SweepRequest): Promise<JobCreated> =>
@@ -254,8 +267,9 @@ export const getIndustries = async (
 export const searchStocks = async (
   q: string,
   market?: string,
+  signal?: AbortSignal,
 ): Promise<SymbolSearchResponse> =>
-  (await http.get('/stocks/search', { params: { q, market } })).data
+  (await http.get('/stocks/search', { params: { q, market }, signal })).data
 
 export const getStockDetail = async (
   symbol: string,
@@ -285,7 +299,11 @@ export const subscribeProgress = (
   onUpdate: (job: JobStatus) => void,
   onClose?: () => void,
 ): WebSocket => {
-  const url = `${WS_BASE}/backtests/${jobId}/progress`
+  // E10:统一走通用进度端点 /jobs/{id}/progress(旧 /backtests/... 保留兼容);
+  // E8:设置 API Token 时经 ?token= 传给 WS 握手(与 HTTP 拦截器同一存储键)。
+  const token = localStorage.getItem('djinn_api_token')
+  const qs = token ? `?token=${encodeURIComponent(token)}` : ''
+  const url = `${WS_BASE}/jobs/${jobId}/progress${qs}`
   const ws = new WebSocket(url)
   ws.onmessage = (ev) => {
     try {

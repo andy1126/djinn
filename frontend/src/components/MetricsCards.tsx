@@ -24,7 +24,7 @@ export default function MetricsCards({ metrics, benchmark }: Props) {
       <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="CVaR 95% (日)" value={fmtPct(metrics.cvar_95 ?? 0)} /></Card></Col>
       <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="最长回撤时长" value={`${metrics.max_drawdown_duration ?? 0} 天`} /></Card></Col>
       <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="最长连亏" value={`${metrics.max_losing_streak ?? 0} 天`} /></Card></Col>
-      <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="Alpha" value={fmtNum(benchmark?.alpha ?? 0)} /></Card></Col>
+      <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="Jensen α" value={fmtNum(benchmark?.alpha ?? 0)} /></Card></Col>
       <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="Beta" value={fmtNum(benchmark?.beta ?? 0)} /></Card></Col>
       {benchmark?.information_ratio != null && (
         <Col xs={12} sm={12} lg={6}><Card size="small"><Statistic title="信息比率" value={fmtNum(benchmark.information_ratio)} /></Card></Col>

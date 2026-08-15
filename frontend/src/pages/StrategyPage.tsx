@@ -11,6 +11,7 @@ import {
   errDetail,
 } from '@/api/client'
 import { useConfigStore } from '@/store/configStore'
+import { useUiStore } from '@/store/uiStore'
 import StrategyParamForm from '@/components/StrategyParamForm'
 import QueryErrorAlert from '@/components/QueryErrorAlert'
 import type { UserStrategy, UserStrategyValidateResponse } from '@/types'
@@ -35,6 +36,7 @@ const KIND_LABEL: Record<string, string> = { python: 'Python', pine: 'Pine Scrip
 export default function StrategyPage() {
   const qc = useQueryClient()
   const { config, updateConfig } = useConfigStore()
+  const dark = useUiStore((s) => s.dark)  // F18:CodeMirror 随主题
 
   const { data: allResp, isError: strategiesError, refetch: refetchStrategies } = useQuery({ queryKey: ['strategies'], queryFn: listStrategies })
   const { data: userList, isLoading: userLoading } = useQuery({
@@ -262,7 +264,7 @@ export default function StrategyPage() {
               value={newCode}
               onChange={(v) => setNewCode(v)}
               height="420px"
-              theme="light"
+              theme={dark ? 'dark' : 'light'}
               extensions={newKind === 'python' ? [python()] : []}
             />
             <Space style={{ marginTop: 12 }}>
@@ -293,7 +295,7 @@ export default function StrategyPage() {
                     value={editCode}
                     onChange={(v) => setEditCode(v)}
                     height="360px"
-                    theme="light"
+                    theme={dark ? 'dark' : 'light'}
                     extensions={selectedUser.kind === 'python' ? [python()] : []}
                   />
                   <Space style={{ marginTop: 12 }}>

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Empty, Popconfirm, Space, Table, Tabs, Tag, Typography, message } from 'antd'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { cancelJob, listBacktests } from '@/api/client'
 import type { JobStatus } from '@/types'
 import ReportDetail from '@/components/ReportDetail'
 import ReportCompare from '@/components/ReportCompare'
+import { useJobTransitionNotify } from '@/hooks/useJobTransitionNotify'
 
 const statusColor: Record<string, string> = {
   pending: 'default', running: 'processing', done: 'success', error: 'error', cancelled: 'default',
@@ -19,10 +20,23 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { jobId } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [detailJobId, setDetailJobId] = useState<string | null>(null)
-  const [compareJobIds, setCompareJobIds] = useState<string[]>([])
+  // F14:勾选状态与 URL ?compare= 双向同步(可分享/跨设备恢复)
+  const [compareJobIds, setCompareJobIds] = useState<string[]>(() => {
+    const c = searchParams.get('compare')
+    return c ? c.split(',').filter(Boolean) : []
+  })
   const [activeTab, setActiveTab] = useState<'detail' | 'compare'>('detail')
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams)
+    if (compareJobIds.length > 0) next.set('compare', compareJobIds.join(','))
+    else next.delete('compare')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareJobIds])
 
   const cancelMut = useMutation({
     mutationFn: cancelJob,
@@ -53,6 +67,8 @@ export default function DashboardPage() {
         ? 3000
         : false,
   })
+  // F16:回测任务 running→终态 迁移 → 全局通知(跨页也能收到)
+  useJobTransitionNotify(jobs, 'backtest')
 
   const openDetail = (id: string) => {
     setDetailJobId(id)
@@ -187,7 +203,14 @@ export default function DashboardPage() {
               {
                 key: 'compare',
                 label: '结果对比',
-                children: <ReportCompare jobIds={compareJobIds} />,
+                children: (
+                  <ReportCompare
+                    jobIds={compareJobIds}
+                    titles={Object.fromEntries(
+                      (jobs ?? []).map((j) => [j.job_id, j.title || j.job_id]),
+                    )}
+                  />
+                ),
               },
             ]}
           />

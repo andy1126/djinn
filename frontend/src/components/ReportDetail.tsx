@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Space, Spin, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Card, Space, Spin, Tabs, Tag, Typography, message } from 'antd'
 import { getBacktestReport, exportBacktest, errDetail } from '@/api/client'
 import MetricsCards from '@/components/MetricsCards'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -142,6 +142,34 @@ export default function ReportDetail({ jobId }: Props) {
             key: 'trades',
             label: '交易明细',
             children: <TradesTable trades={report.trades} />,
+          },
+          {
+            key: 'selection',
+            label: '调仓快照',
+            children: report.meta?.selection_log?.length ? (
+              <Card size="small" title={`调仓快照(${report.meta.selection_log.length} 次)`}>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  {report.meta.selection_log.map((log) => (
+                    <div key={log.date}>
+                      <Typography.Text strong>{log.date}</Typography.Text>
+                      <div style={{ marginTop: 4 }}>
+                        <Space wrap size={[4, 4]}>
+                          {log.selected.map((s) => (
+                            <Tag key={s}>
+                              {s}: {log.scores[s] != null ? log.scores[s].toFixed(3) : '—'}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    </div>
+                  ))}
+                </Space>
+              </Card>
+            ) : (
+              <Typography.Text type="secondary">
+                无调仓快照(因子组合策略之外的回测不记录)
+              </Typography.Text>
+            ),
           },
         ]}
       />
