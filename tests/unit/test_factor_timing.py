@@ -71,6 +71,18 @@ def test_regime_filter() -> None:
     assert f.exposure_cap() == 0.3  # 跌破 → floor
 
 
+def test_regime_filter_large_window() -> None:
+    """MarketRegimeFilter window>210 时闸门仍生效(旧 deque maxlen=210 恒放行)。"""
+    f = MarketRegimeFilter(window=250, floor=0.3)
+    for _ in range(300):
+        f.update(100.0)  # 低于 SMA250 → 闸门应关
+    assert f.exposure_cap() == 0.3
+    f2 = MarketRegimeFilter(window=250, floor=0.3)
+    for i in range(300):
+        f2.update(100.0 + i * 0.1)  # 上行站上 SMA → 放行
+    assert f2.exposure_cap() == 1.0
+
+
 def test_sma_break_exit() -> None:
     e = SMABreakExit(window=3)
     for c in [10.0, 10.0, 10.0]:
@@ -500,6 +512,35 @@ def test_regime_scales_weights() -> None:
     w = res.weights_curve[["A", "B"]].iloc[-1].sum()
     assert w > 0.1, f"应有持仓,实际总权重 {w}"
     assert w < 0.6, f"闸门未缩放权重(总仓位 {w},应为 ~0.3)"
+
+
+def test_icir_no_window_starvation() -> None:
+    """C9:icir 加权的调仓面板覆盖滚动 ICIR 窗口(旧 D3 截断按 max_lookback 会饿死→选不出)。"""
+    from djinn.engine import EngineConfig, EventDrivenEngine
+    from djinn.factor import make_factor
+    from djinn.screen import FactorScore
+
+    days = pd.bdate_range("2024-01-01", periods=300)
+    # 不同斜率 → 动量截面有信号 → ICIR 应产出非零权重
+    data = {
+        s: _md(
+            s, {d: 100.0 + j * (0.1 + i * 0.05) for j, d in enumerate(days)}
+        )
+        for i, s in enumerate(["A", "B", "C"])
+    }
+    strat = FactorPortfolioStrategy(
+        factors=[make_factor("momentum", period=10)],
+        scores=[FactorScore(factor="momentum", weight=1.0)],
+        n_stocks=2,
+        rebalance_freq=20,
+        weighting="icir",
+        icir_window=60,
+        icir_min_periods=20,
+    )
+    eng = EventDrivenEngine(EngineConfig(initial_cash=100000.0, calendar="union"))
+    res = eng.run(strat, data)
+    assert strat.selection_log, "icir 应能选出股票(ICIR 窗口未被截断饿死)"
+    assert any(res.positions_curve[s].iloc[-1] > 0 for s in ["A", "B", "C"])
 
 
 def test_benchmark_in_ctx() -> None:

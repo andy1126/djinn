@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from djinn.strategy import (
     BuyAndHold,
@@ -139,6 +140,25 @@ def test_turtle_atr_breakout_enters_long():
         {"A": _frame(close)},
     )
     assert any(sym == "A" and 0 < pct <= 1 for sym, pct in orders)
+
+
+def test_turtle_atr_position_sizing():
+    """TurtleATR 仓位 = risk_per_unit×price/ATR(经典海龟,旧式多除 atr_period)。"""
+    from djinn.indicators import atr as atr_ind
+
+    close = np.concatenate([np.full(20, 100.0), [110.0]])
+    orders = _run_bars(
+        TurtleATR(entry=5, exit_=5, atr_period=5, risk_per_unit=0.01),
+        {"A": _frame(close)},
+    )
+    buys = [pct for sym, pct in orders if sym == "A" and pct > 0]
+    assert buys
+    df = _frame(close)
+    a = float(atr_ind(df["high"], df["low"], df["close"], 5).iloc[-1])
+    expected = min(1.0, 0.01 * 110.0 / a)  # 经典:不再除以 atr_period
+    assert buys[0] == pytest.approx(expected, rel=0.1)
+    # 旧式(多除 5)会得到 5 倍小的仓位,与经典公式显著不同
+    assert buys[0] > 0.01 * 110.0 / (5 * a) * 2
 
 
 def test_grid_accumulates_on_dip():

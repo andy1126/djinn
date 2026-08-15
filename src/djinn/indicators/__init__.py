@@ -192,8 +192,14 @@ def mfi(
     neg = mf.where(tp < tp.shift(1), 0.0)
     pos_sum = pos.rolling(n, min_periods=n).sum()
     neg_sum = neg.rolling(n, min_periods=n).sum()
-    ratio = pos_sum / neg_sum.replace(0, np.nan)
-    return 100 - 100 / (1 + ratio)
+    # 资金比率 = 正流 / 负流;全流入(neg_sum=0)→ +inf → MFI=100
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = pos_sum / neg_sum.replace(0, np.nan)
+        out = 100 - 100 / (1 + ratio)
+    # 全流入(正流>0 负流=0)→ 100;价格横盘(双 0)→ 中性 50;暖机期保持 NaN
+    out = out.mask((neg_sum == 0) & (pos_sum > 0), 100.0)
+    out = out.mask((neg_sum == 0) & (pos_sum == 0), 50.0)
+    return out
 
 
 def wpr(
@@ -236,11 +242,13 @@ def dmi(
 def aroon(high: pd.Series, low: pd.Series, n: int | float = 14) -> pd.DataFrame:
     """阿隆指标,返回 ``{aroon_up, aroon_down}``(0~100,100=近期新高/新低)。"""
     n = _n(n)
+    # ``np.argmax/argmin`` 返回首次出现的极值;Aroon 应取「距最近一次极值的期数」,
+    # 重复极值时用最近一次(反转数组取 argmax → 距窗末的期数)。
     up = high.rolling(n, min_periods=n).apply(
-        lambda x: float((n - 1) - int(np.argmax(x))), raw=True
+        lambda x: float(int(np.argmax(x[::-1]))), raw=True
     )
     down = low.rolling(n, min_periods=n).apply(
-        lambda x: float((n - 1) - int(np.argmin(x))), raw=True
+        lambda x: float(int(np.argmin(x[::-1]))), raw=True
     )
     return pd.DataFrame(
         {"aroon_up": 100 * (n - up) / n, "aroon_down": 100 * (n - down) / n}

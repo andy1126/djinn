@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from djinn import indicators
 
@@ -132,6 +133,32 @@ def test_mfi_wpr_bounds():
     assert mfi.dropna().between(0, 100).all()
     wpr = indicators.wpr(high, low, close, 14)
     assert wpr.dropna().between(-100, 0).all()
+
+
+def test_aroon_duplicate_extreme_uses_last():
+    """Aroon 重复极值取最近一次(旧 argmax 取首次导致数值偏低)。"""
+    idx = pd.bdate_range("2024-01-01", periods=5)
+    # 末日窗口 [10,5,10,8]:最高 10 出现在 idx0(首次)与 idx2(最近)
+    high = pd.Series([1, 10, 5, 10, 8], index=idx)
+    out = indicators.aroon(high, high, 4)
+    # 距最近一次极值 = 1 期 → aroon_up = 100×(4-1)/4 = 75
+    assert out["aroon_up"].iloc[-1] == pytest.approx(75.0)
+    # 无重复窗口 [5,10,8,7] → 距 10 = 2 期 → 50
+    high2 = pd.Series([1, 5, 10, 8, 7], index=idx)
+    assert indicators.aroon(high2, high2, 4)["aroon_up"].iloc[-1] == pytest.approx(50.0)
+
+
+def test_mfi_all_inflow_is_100():
+    """MFI 全流入 → 100(旧实现 neg_sum=0 时返回 NaN),全流出 → 0。"""
+    idx = pd.bdate_range("2024-01-01", periods=8)
+    v = pd.Series([100.0] * 8, index=idx)
+    up = pd.Series([10, 11, 12, 13, 14, 15, 16, 17], index=idx)
+    assert indicators.mfi(up, up - 0.1, up, v, 4).iloc[-1] == pytest.approx(100.0)
+    down = pd.Series([17, 16, 15, 14, 13, 12, 11, 10], index=idx)
+    assert indicators.mfi(down, down - 0.1, down, v, 4).iloc[-1] == pytest.approx(0.0)
+    # 价格横盘(无流向)→ 中性 50(非 NaN)
+    flat = pd.Series([10.0] * 8, index=idx)
+    assert indicators.mfi(flat, flat - 0.1, flat, v, 4).iloc[-1] == pytest.approx(50.0)
 
 
 def test_dmi_aroon_kc_columns():

@@ -13,8 +13,9 @@ class TurtleATR(Strategy):
 
     - 收盘突破过去 ``entry`` 日高点 → 做多;
     - 收盘跌破过去 ``exit_`` 日低点 → 平仓;
-    - 仓位按 ATR 定:权重 = ``risk_per_unit`` × price / (``atr_period`` × ATR),
-      波动越大仓位越小,上限 100%。
+    - 仓位按 ATR 定:权重 = ``risk_per_unit`` × price / ATR,
+      波动越大仓位越小,上限 100%(经典海龟:单位 = 1% 净值 ÷ N,``N`` = ATR 值,
+      ``atr_period`` 只是算 ATR 的窗口,不再乘进分母)。
     """
 
     entry = param(20, min=2, max=250, description="突破周期(入场)")
@@ -44,11 +45,10 @@ class TurtleATR(Strategy):
             is_long = self._long.get(s, False)
             if not is_long and price > hh:
                 self._long[s] = True
+                # 经典海龟:weight = risk_per_unit × price / N(N = ATR 值)。
+                # 旧实现多除一个 atr_period(ATR 已按该窗口算得),仓位被缩小 atr_period 倍。
                 w = (
-                    min(
-                        1.0,
-                        float(self.risk_per_unit) * price / (int(self.atr_period) * a),
-                    )
+                    min(1.0, float(self.risk_per_unit) * price / a)
                     if a > 0
                     else 1.0
                 )

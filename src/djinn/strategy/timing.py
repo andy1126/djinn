@@ -19,7 +19,12 @@ class MarketRegimeFilter:
 
     window: int = 200
     floor: float = 0.0
-    _closes: deque[float] = field(default_factory=lambda: deque(maxlen=210))
+    _closes: deque[float] = field(default_factory=deque)
+
+    def __post_init__(self) -> None:
+        # 缓冲随 window 自适应:旧实现 maxlen 硬编码 210,window>210 时
+        # ``len < window`` 恒成立 → 闸门静默失效(永远放行)。
+        self._closes = deque(maxlen=int(self.window) + 10)
 
     def update(self, close: float | None) -> None:
         if close is not None and close > 0:

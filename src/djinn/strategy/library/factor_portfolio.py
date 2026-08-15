@@ -129,6 +129,10 @@ class FactorPortfolioStrategy(Strategy):
         fundamentals = self._visible_fundamentals(ctx)
         # D3:截断到最大回看窗口(因子 rolling 只依赖最近 lb 日,截断后末行不变)
         lb = max((getattr(f, "max_lookback", 252) for f in self._factors), default=252)
+        # C9:icir 加权的滚动 ICIR 需要额外历史——面板至少覆盖
+        # ``window + min_periods + holding`` 个交易日,否则 IC 窗口饥饿 → 权重退化
+        if self.weighting == "icir":
+            lb = max(lb, self.icir_window + self.icir_min_periods + int(self.rebalance_freq))
         cutoff = pd.Timestamp(ctx.now) - pd.Timedelta(days=int(lb * 1.6) + 30)
         prices = prices.loc[prices.index >= cutoff]
         if len(prices) < 2:
